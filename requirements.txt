@@ -1,0 +1,7 @@
+streamlit
+python_dotenv
+azure_storage_blob
+azure_ai_documentintelligence
+openai
+jsonschema
+pydantic
