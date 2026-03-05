@@ -4,16 +4,15 @@ import os
 import re
 import uuid
 from datetime import datetime
-from math import exp
 
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from jsonschema import Draft202012Validator
 
+from azure.ai.contentunderstanding import ContentUnderstandingClient
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
-
-from azure.ai.contentunderstanding import ContentUnderstandingClient
 from openai import AzureOpenAI
 
 from cu_confidence import content_understanding_confidence
@@ -127,6 +126,7 @@ def content_understanding_ir(pdf_bytes: bytes) -> dict:
             brs = []
             for br in getattr(c, "bounding_regions", []) or []:
                 brs.append({"page": getattr(br, "page_number", None), "polygon": getattr(br, "polygon", None)})
+
             cells.append(
                 {
                     "row": getattr(c, "row_index", None),
@@ -135,6 +135,12 @@ def content_understanding_ir(pdf_bytes: bytes) -> dict:
                     "col_span": getattr(c, "column_span", 1),
                     "text": (getattr(c, "content", "") or "").strip(),
                     "kind": getattr(c, "kind", None),
+                    # Needed for table cell OCR confidence logic in cu_confidence.py
+                    "spans": [
+                        {"offset": getattr(s, "offset", None), "length": getattr(s, "length", None)}
+                        for s in (getattr(c, "spans", []) or [])
+                        if getattr(s, "offset", None) is not None and getattr(s, "length", None) is not None
+                    ],
                     "bounding_regions": brs,
                 }
             )
@@ -152,16 +158,21 @@ def content_understanding_ir(pdf_bytes: bytes) -> dict:
             }
         )
 
-    # Optional OCR word confidences, used for scan and handwriting clarity scoring
     word_items = []
     for w in getattr(content, "words", []) or []:
         brs = []
         for br in getattr(w, "bounding_regions", []) or []:
             brs.append({"page": getattr(br, "page_number", None), "polygon": getattr(br, "polygon", None)})
+
+        span_obj = getattr(w, "span", None)
         word_items.append(
             {
                 "text": (getattr(w, "content", "") or "").strip(),
                 "confidence": getattr(w, "confidence", None),
+                "span": {
+                    "offset": getattr(span_obj, "offset", None),
+                    "length": getattr(span_obj, "length", None),
+                },
                 "bounding_regions": brs,
             }
         )
@@ -224,7 +235,6 @@ def split_into_chunks(markdown: str, max_chars: int) -> list[str]:
     ]
 
 
-# Schema registry starter
 SCHEMA_REGISTRY = {
     "tax_1040": {"type": "object", "additionalProperties": True},
     "tax_1120s": {"type": "object", "additionalProperties": True},
@@ -233,7 +243,6 @@ SCHEMA_REGISTRY = {
     "annual_report": {"type": "object", "additionalProperties": True},
 }
 
-# Envelope does not include document level confidence
 ENVELOPE_SCHEMA = {
     "type": "object",
     "required": ["metadata", "schema", "payload", "evidence", "validations"],
@@ -355,14 +364,12 @@ def _value_in_text(value_str: str, text: str) -> bool:
 
 def _page_clarity_map(ir: dict) -> dict:
     pages = ir.get("pages") or []
-    md = (ir.get("markdown") or "").strip()
     words = ir.get("words") or []
 
     page_numbers = [p.get("page_number") for p in pages if p.get("page_number") is not None]
     if not page_numbers:
         return {1: 0.6}
 
-    # OCR based clarity if word confidence exists
     if words:
         by_page = {pn: [] for pn in page_numbers}
         for w in words:
@@ -387,36 +394,7 @@ def _page_clarity_map(ir: dict) -> dict:
                 clarity[pn] = 0.55
         return clarity
 
-    # Fallback clarity from markdown density and noise
-    marker = "<!-- PageBreak -->"
-    if marker in md:
-        chunks = [c.strip() for c in md.split(marker)]
-        chunks = chunks[: len(page_numbers)]
-    else:
-        if not md:
-            chunks = ["" for _ in page_numbers]
-        else:
-            step = max(1, len(md) // max(1, len(page_numbers)))
-            chunks = [md[i : i + step].strip() for i in range(0, len(md), step)]
-            chunks = chunks[: len(page_numbers)]
-
-    clarity = {}
-    for i, pn in enumerate(page_numbers):
-        txt = chunks[i] if i < len(chunks) else ""
-        chars = len(txt)
-
-        if chars < 100:
-            clarity[pn] = 0.25
-            continue
-
-        nonword = sum(1 for ch in txt if not (ch.isalnum() or ch.isspace()))
-        garbage_ratio = nonword / max(1, len(txt))
-
-        density_score = max(0.0, min(1.0, chars / 1400))
-        noise_score = max(0.0, min(1.0, 1.0 - garbage_ratio * 6.0))
-        clarity[pn] = round(max(0.0, min(1.0, 0.55 * density_score + 0.45 * noise_score)), 3)
-
-    return clarity
+    return {pn: 0.55 for pn in page_numbers}
 
 
 def _field_page_from_evidence(evidence: object, field_name: str):
@@ -469,12 +447,6 @@ def _leaf_confidence(field_name: str, value: object, base: float, evidence: obje
 
 
 def attach_field_confidence(payload, evidence, base_confidence, ir, field_name=""):
-    """
-    Leaves become { value, confidence_score }
-    Dict parents get confidence_score as average of child confidence_score
-    Lists become { items: [...], confidence_score }
-    """
-
     if isinstance(payload, dict):
         if set(payload.keys()) == {"value", "confidence_score"}:
             return payload
@@ -649,17 +621,59 @@ def deterministic_validate(extracted: dict) -> dict:
     return {"status": "pass" if not errors else "fail", "errors": errors}
 
 
+def extract_word_confidence_from_ir(ir: dict) -> list[dict]:
+    words_data = []
+    for w in (ir.get("words") or []):
+        conf = w.get("confidence", None)
+        try:
+            conf_f = float(conf) if conf is not None else None
+        except Exception:
+            conf_f = None
+
+        page = None
+        polygon = None
+        brs = w.get("bounding_regions") or []
+        if brs and isinstance(brs, list) and isinstance(brs[0], dict):
+            page = brs[0].get("page", None) or brs[0].get("page_number", None)
+            polygon = brs[0].get("polygon", None)
+
+        words_data.append(
+            {
+                "page": page,
+                "word": w.get("text") or "",
+                "confidence": round(conf_f, 4) if conf_f is not None else None,
+                "polygon": polygon,
+            }
+        )
+    return words_data
+
+
+def compute_word_confidence_stats(words_data: list[dict]) -> dict:
+    confs = [w["confidence"] for w in words_data if w.get("confidence") is not None]
+    if not confs:
+        return {"total_words": len(words_data), "avg_confidence": None, "low_confidence_count": 0}
+
+    avg_conf = sum(confs) / len(confs)
+    low_count = sum(1 for c in confs if c < 0.8)
+    return {
+        "total_words": len(words_data),
+        "avg_confidence": round(avg_conf, 4),
+        "low_confidence_count": low_count,
+    }
+
+
 # Streamlit UI
 st.set_page_config(page_title="Baker Hill POC", layout="wide")
-st.title("Baker Hill POC: Blob to Content Understanding to Azure OpenAI to Validation")
+st.title("Baker Hill POC Blob to Content Understanding to Azure OpenAI to Validation")
 
 with st.sidebar:
     st.header("Settings")
-    st.write("Analyzer:", CONTENT_UNDERSTANDING_ANALYZER_ID)
+    st.write("CU endpoint:", AZURE_CONTENT_UNDERSTANDING_ENDPOINT)
+    st.write("CU analyzer id:", repr(CONTENT_UNDERSTANDING_ANALYZER_ID))
     run_business = st.checkbox("Run LLM business validation", value=True)
-    user_hint = st.text_input("Hint (optional)", value="tax or financial, and form name if known")
-    chunk_chars_extract = st.slider("LLM chunk size for extraction (chars)", 8000, 24000, 18000, 1000)
-    chunk_chars_validate = st.slider("LLM chunk size for validation (chars)", 6000, 16000, 12000, 1000)
+    user_hint = st.text_input("Hint optional", value="tax or financial, and form name if known")
+    chunk_chars_extract = st.slider("LLM chunk size for extraction chars", 8000, 24000, 18000, 1000)
+    chunk_chars_validate = st.slider("LLM chunk size for validation chars", 6000, 16000, 12000, 1000)
 
 uploaded = st.file_uploader("Upload a PDF", type=["pdf"])
 run_btn = st.button("Run pipeline", type="primary", disabled=(uploaded is None))
@@ -688,24 +702,27 @@ if run_btn:
     prog = st.progress(0)
     status = st.empty()
 
-    status.write("Step 1: Upload PDF to Blob")
+    status.write("Step 1 Upload PDF to Blob")
     blob_upload_bytes(blob_service, BLOB_INPUT_CONTAINER, pdf_blob, pdf_bytes, "application/pdf")
     prog.progress(15)
 
-    status.write("Step 2: Content Understanding")
+    status.write("Step 2 Content Understanding")
     try:
         ir = content_understanding_ir(pdf_bytes)
     except Exception as ex:
-        st.error(f"Content Understanding failed: {ex}")
+        st.error(
+            "Content Understanding failed.\n\n"
+            f"Endpoint: {AZURE_CONTENT_UNDERSTANDING_ENDPOINT}\n"
+            f"Analyzer ID: {CONTENT_UNDERSTANDING_ANALYZER_ID}\n\n"
+            f"Error: {ex}"
+        )
         st.stop()
 
-    # CU based document quality components, used only as base and diagnostics
     cu_conf = content_understanding_confidence(ir)
-
     blob_upload_json(blob_service, BLOB_LOG_CONTAINER, ir_blob, ir)
     prog.progress(45)
 
-    status.write("Step 3: Azure OpenAI dynamic JSON")
+    status.write("Step 3 Azure OpenAI dynamic JSON")
     try:
         extracted = llm_dynamic_json(ir, user_hint=user_hint, chunk_chars=chunk_chars_extract)
     except Exception as ex:
@@ -717,7 +734,6 @@ if run_btn:
     extracted.setdefault("evidence", {})
     extracted.setdefault("validations", {})
 
-    # Field level and parent level confidence scores
     extracted["payload"] = attach_field_confidence(
         extracted.get("payload"),
         evidence=extracted.get("evidence"),
@@ -732,7 +748,7 @@ if run_btn:
 
     business_report = {}
     if run_business:
-        status.write("Step 4: LLM business validation")
+        status.write("Step 4 LLM business validation")
         try:
             business_report = llm_business_validation(ir, extracted, chunk_chars=chunk_chars_validate)
         except Exception as ex:
@@ -751,7 +767,7 @@ if run_btn:
 
     prog.progress(85)
 
-    status.write("Step 5: Deterministic validation")
+    status.write("Step 5 Deterministic validation")
     det_report = deterministic_validate(extracted)
 
     extracted["validations"]["business_validation"] = business_report
@@ -768,22 +784,52 @@ if run_btn:
     prog.progress(100)
     status.write("Done")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Content Understanding markdown preview")
-        st.code((ir.get("markdown") or "")[:6000])
-        st.write("Pages detected:", len(ir.get("pages") or []))
-        st.write("Tables detected:", len(ir.get("tables") or []))
-        st.write("Words captured:", len(ir.get("words") or []))
+    tab_words, tab_tables, tab_conf, tab_json = st.tabs(
+        ["Words and confidence", "Tables", "CU confidence diagnostics", "Final JSON"]
+    )
 
-    with c2:
+    with tab_words:
+        st.subheader("Words with confidence scores")
+
+        words_data = extract_word_confidence_from_ir(ir)
+        stats = compute_word_confidence_stats(words_data)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total words", stats["total_words"])
+        c2.metric("Avg confidence", "N/A" if stats["avg_confidence"] is None else f"{stats['avg_confidence']:.4f}")
+        c3.metric("Low confidence under 0.8", stats["low_confidence_count"])
+
+        min_confidence = st.slider("Minimum confidence score", 0.0, 1.0, 0.0, 0.05)
+        filtered = [w for w in words_data if w.get("confidence") is not None and w["confidence"] >= min_confidence]
+
+        if filtered:
+            st.dataframe(pd.DataFrame(filtered), use_container_width=True, height=420)
+            st.download_button(
+                "Download words json",
+                data=json.dumps(words_data, indent=2),
+                file_name=f"{base}_words.json",
+                mime="application/json",
+            )
+        else:
+            st.info("No words matched the filter")
+
+    with tab_tables:
+        st.subheader("Extracted tables")
+        tables = ir.get("tables") or []
+        st.write("Tables detected:", len(tables))
+        if tables:
+            st.json(tables)
+        else:
+            st.info("No tables found")
+
+    with tab_conf:
+        st.subheader("Content Understanding confidence diagnostics")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("OCR avg confidence", cu_conf["components"].get("ocr_avg_confidence"))
+        m2.metric("Table cell OCR avg confidence", cu_conf["components"].get("table_cell_ocr_avg_confidence"))
+        m3.metric("Composite document confidence_score", cu_conf.get("confidence_score"))
+        st.json(cu_conf["components"])
+
+    with tab_json:
         st.subheader("Final JSON with field and parent confidence_score")
         st.json(extracted)
-
-    st.info(f"Blob outputs: input={pdf_blob} logs={ir_blob}, {extracted_blob} output={final_blob}")
-    st.download_button(
-        label="Download final JSON",
-        data=json.dumps(extracted, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name=final_blob,
-        mime="application/json",
-    )
