@@ -23,15 +23,31 @@ def content_understanding_ir(pdf_bytes: bytes) -> dict:
     content = result.contents[0]
     markdown = getattr(content, "markdown", "") or ""
 
+    # Collect OCR word-level confidence from Content Understanding (when words are returned)
+    all_confidences: list[float] = []
+    confidence_per_page: list[dict] = []
+
     pages = []
     for p in getattr(content, "pages", []) or []:
+        page_num = getattr(p, "page_number", None)
         pages.append(
             {
-                "page_number": getattr(p, "page_number", None),
+                "page_number": page_num,
                 "width": getattr(p, "width", None),
                 "height": getattr(p, "height", None),
             }
         )
+        words = getattr(p, "words", []) or []
+        page_confs = [float(getattr(w, "confidence", 0) or 0) for w in words if getattr(w, "confidence", None) is not None]
+        if page_confs:
+            all_confidences.extend(page_confs)
+            confidence_per_page.append({
+                "page_number": page_num,
+                "word_count": len(page_confs),
+                "avg_confidence": round(sum(page_confs) / len(page_confs), 4),
+                "min_confidence": round(min(page_confs), 4),
+                "max_confidence": round(max(page_confs), 4),
+            })
 
     tables = []
     for t in getattr(content, "tables", []) or []:
@@ -65,10 +81,23 @@ def content_understanding_ir(pdf_bytes: bytes) -> dict:
             }
         )
 
+    # Summary of OCR confidence (0–1) from Content Understanding word-level scores
+    content_understanding_confidence: dict = {}
+    if all_confidences:
+        content_understanding_confidence = {
+            "source": "content_understanding_ocr",
+            "word_count": len(all_confidences),
+            "avg_confidence": round(sum(all_confidences) / len(all_confidences), 4),
+            "min_confidence": round(min(all_confidences), 4),
+            "max_confidence": round(max(all_confidences), 4),
+            "per_page": confidence_per_page,
+        }
+
     return {
         "analyzer_id": CONTENT_UNDERSTANDING_ANALYZER_ID,
         "content_format": "markdown",
         "markdown": markdown,
         "pages": pages,
         "tables": tables,
+        "content_understanding_confidence": content_understanding_confidence if content_understanding_confidence else None,
     }

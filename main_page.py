@@ -110,6 +110,11 @@ if run_btn:
     extracted["metadata"]["source_blob"] = pdf_blob
     extracted["metadata"]["ir_blob"] = ir_blob
 
+    # Add Content Understanding (OCR) confidence to final JSON when available
+    cu_conf = ir.get("content_understanding_confidence")
+    if cu_conf is not None:
+        extracted.setdefault("confidence", {})["content_understanding"] = cu_conf
+
     blob_upload_json(blob_service, BLOB_OUTPUT_CONTAINER, final_blob, extracted)
     prog.progress(100)
     status.write("Done")
