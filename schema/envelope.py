@@ -1,8 +1,8 @@
 ENVELOPE_SCHEMA = {
-    "type": "object",
-    "required": ["metadata", "schema", "payload", "evidence", "confidence", "validations"],
+    "type": "object", # the envelope is a JSON object
+    "required": ["metadata", "schema", "payload", "evidence", "confidence", "validations"], # the envelope is required to have these properties
     "properties": {
-        "metadata": {"type": "object"},
+        "metadata": {"type": "object"}, # metadata about the document
         "schema": {
             "type": "object",
             "required": ["schema_id", "schema_version"],

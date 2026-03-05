@@ -62,7 +62,8 @@ if run_btn:
         st.error(f"Content Understanding failed: {ex}")
         st.stop()
 
-    blob_upload_json(blob_service, BLOB_LOG_CONTAINER, ir_blob, ir)
+    # Do not save markdown/IR to blob for now
+    # blob_upload_json(blob_service, BLOB_LOG_CONTAINER, ir_blob, ir)
     prog.progress(45)
 
     status.write("Step 3: Azure OpenAI dynamic JSON (chunked)")
@@ -116,18 +117,41 @@ if run_btn:
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Content Understanding markdown preview")
-        st.code((ir.get("markdown") or "")[:6000])
+        markdown_text = (ir.get("markdown") or "").strip()
+        st.code(markdown_text[:6000])
         st.write("Pages detected:", len(ir.get("pages") or []))
         st.write("Tables detected:", len(ir.get("tables") or []))
+        st.download_button(
+            label="Download markdown",
+            data=markdown_text.encode("utf-8"),
+            file_name=f"{base}.content_understanding.md",
+            mime="text/markdown",
+            key="download_cu_md",
+        )
 
     with c2:
-        st.subheader("Final JSON")
-        st.json(extracted)
+        st.subheader("Final JSON (preview)")
+        json_str = json.dumps(extracted, ensure_ascii=False, indent=2)
+        preview_chars = 4000
+        st.code(json_str[:preview_chars] + ("…" if len(json_str) > preview_chars else ""))
+        st.caption(f"Showing first {min(preview_chars, len(json_str)):,} of {len(json_str):,} characters")
 
     st.info(f"Blob outputs: input={pdf_blob} logs={ir_blob}, {extracted_blob} output={final_blob}")
-    st.download_button(
-        label="Download final JSON",
-        data=json.dumps(extracted, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name=final_blob,
-        mime="application/json",
-    )
+    st.subheader("Downloads")
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        st.download_button(
+            label="Download markdown (.md)",
+            data=markdown_text.encode("utf-8"),
+            file_name=f"{base}.content_understanding.md",
+            mime="text/markdown",
+            key="download_markdown_btn",
+        )
+    with dl_col2:
+        st.download_button(
+            label="Download final JSON",
+            data=json.dumps(extracted, ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name=final_blob,
+            mime="application/json",
+            key="download_json_btn",
+        )
