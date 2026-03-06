@@ -1,19 +1,31 @@
 """
-Azure Content Understanding client wrapper plus tax JSON generation.
+conf_score.py
 
-This file does four things:
+Production ready module for:
 
-1. Calls Azure Content Understanding and polls for completion
-2. Extracts words, lines, and table cells with confidence
-3. Builds a compact evidence pack for tax extraction
-4. Calls Azure OpenAI to generate final tax JSON in envelope form
-   with field confidence_score and parent confidence_score
+1. Calling Azure Content Understanding
+2. Extracting words, lines, table cells, and paragraphs with confidence
+3. Detecting document type dynamically
+4. Building a dynamic envelope for tax documents, financial documents, or generic documents
+5. Using Azure OpenAI to structure tax and financial payloads
+6. Adding confidence_score to leaves and parent objects
+
+Expected environment variables for Azure OpenAI:
+AZURE_OPENAI_ENDPOINT
+AZURE_OPENAI_KEY
+AZURE_OPENAI_DEPLOYMENT
+AZURE_OPENAI_API_VERSION
+
+Optional:
+LLM_TIMEOUT_SEC
+LLM_MAX_EVIDENCE_CHARS
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -95,6 +107,10 @@ def _extract_spans(node: Dict[str, Any]) -> List[Span]:
         return [span] if span.length > 0 else []
 
     return []
+
+
+def default_analyzer_id() -> str:
+    return "prebuilt-layout"
 
 
 class ContentUnderstandingClient:
@@ -319,7 +335,7 @@ class ContentUnderstandingClient:
         result: Dict[str, Any],
         *,
         aggregate_mode: str = "mean",
-        max_lines_per_page: int = 250,
+        max_lines_per_page: int = 300,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         words_by_page = ContentUnderstandingClient._words_index_by_page(result)
@@ -357,12 +373,55 @@ class ContentUnderstandingClient:
         return rows
 
     @staticmethod
+    def extract_paragraphs_with_confidence(
+        result: Dict[str, Any],
+        *,
+        aggregate_mode: str = "mean",
+        max_paragraphs_per_page: int = 250,
+    ) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        words_by_page = ContentUnderstandingClient._words_index_by_page(result)
+
+        for page in ContentUnderstandingClient.iter_pages(result):
+            page_number = _safe_int(_coalesce(page.get("pageNumber"), page.get("page")), 0)
+            page_words = words_by_page.get(page_number, [])
+
+            paragraphs = page.get("paragraphs") or []
+            if not isinstance(paragraphs, list):
+                continue
+
+            for idx, paragraph in enumerate(paragraphs[:max_paragraphs_per_page]):
+                if not isinstance(paragraph, dict):
+                    continue
+
+                spans = _extract_spans(paragraph)
+                confidence = ContentUnderstandingClient._aggregate_confidence_for_spans(
+                    words=page_words,
+                    spans=spans,
+                    mode=aggregate_mode,
+                )
+
+                rows.append(
+                    {
+                        "page": page_number,
+                        "paragraph_index": idx,
+                        "text": paragraph.get("content", ""),
+                        "confidence": confidence,
+                        "role": paragraph.get("role"),
+                        "spans": [{"offset": s.offset, "length": s.length} for s in spans],
+                        "source": paragraph.get("source"),
+                    }
+                )
+
+        return rows
+
+    @staticmethod
     def extract_table_cells_with_confidence(
         result: Dict[str, Any],
         *,
         aggregate_mode: str = "mean",
         max_tables_per_page: int = 50,
-        max_cells_per_table: int = 500,
+        max_cells_per_table: int = 800,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         words_by_page = ContentUnderstandingClient._words_index_by_page(result)
@@ -411,15 +470,11 @@ class ContentUnderstandingClient:
         return rows
 
 
-def default_analyzer_id() -> str:
-    return "prebuilt-layout"
-
-
 def _azure_openai_chat_completion(
     *,
     messages: List[Dict[str, Any]],
     temperature: float = 0.0,
-    max_tokens: int = 2500,
+    max_tokens: int = 3500,
 ) -> str:
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
     key = os.getenv("AZURE_OPENAI_KEY", "")
@@ -446,7 +501,7 @@ def _azure_openai_chat_completion(
         "response_format": {"type": "json_object"},
     }
 
-    timeout_sec = _safe_int(os.getenv("LLM_TIMEOUT_SEC", "90"), 90)
+    timeout_sec = _safe_int(os.getenv("LLM_TIMEOUT_SEC", "120"), 120)
 
     response = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
 
@@ -464,58 +519,6 @@ def _azure_openai_chat_completion(
         raise LLMError("Empty LLM response content")
 
     return content.strip()
-
-
-def build_evidence_pack_for_tax(raw_result: Dict[str, Any], max_chars: int = 30000) -> Dict[str, Any]:
-    """
-    Build a compact evidence pack for the LLM from high confidence lines and table cells.
-    """
-    lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
-    cells = ContentUnderstandingClient.extract_table_cells_with_confidence(raw_result, aggregate_mode="mean")
-
-    def sort_key(item: Dict[str, Any]) -> float:
-        confidence = _safe_float(item.get("confidence"))
-        return confidence if confidence is not None else 0.0
-
-    lines = sorted(lines, key=sort_key, reverse=True)
-    cells = sorted(cells, key=sort_key, reverse=True)
-
-    pack = {
-        "lines": [
-            {
-                "page": row.get("page"),
-                "text": row.get("text"),
-                "confidence": row.get("confidence"),
-            }
-            for row in lines[:1500]
-            if (row.get("text") or "").strip()
-        ],
-        "table_cells": [
-            {
-                "page": row.get("page"),
-                "table_index": row.get("table_index"),
-                "row_index": row.get("row_index"),
-                "column_index": row.get("column_index"),
-                "text": row.get("text"),
-                "confidence": row.get("confidence"),
-            }
-            for row in cells[:1500]
-            if (row.get("text") or "").strip()
-        ],
-    }
-
-    raw = json.dumps(pack, ensure_ascii=False)
-    if len(raw) <= max_chars:
-        return pack
-
-    ratio = max_chars / max(1, len(raw))
-    keep_lines = max(80, int(len(pack["lines"]) * ratio))
-    keep_cells = max(80, int(len(pack["table_cells"]) * ratio))
-
-    return {
-        "lines": pack["lines"][:keep_lines],
-        "table_cells": pack["table_cells"][:keep_cells],
-    }
 
 
 def _normalize_leaf_node(node: Any) -> Dict[str, Any]:
@@ -552,14 +555,6 @@ def _collect_child_confidences(node: Any) -> List[float]:
 
 
 def _add_parent_confidence(node: Any) -> Any:
-    """
-    Recursively add confidence_score to parent dictionaries.
-    Leaf shape is preserved as
-    {
-      "value": ...,
-      "confidence_score": ...
-    }
-    """
     if isinstance(node, dict):
         for key, value in list(node.items()):
             node[key] = _add_parent_confidence(value)
@@ -583,201 +578,248 @@ def _add_parent_confidence(node: Any) -> Any:
     return node
 
 
-def _make_tax_1120s_prompt(
-    evidence: Dict[str, Any],
-    *,
-    doc_id: str,
-    created_utc: str,
-    source_blob: str,
-    ir_blob: str,
-    cu_analyzer_id: str,
-) -> List[Dict[str, str]]:
-    system = """
-You are an extraction engine for IRS tax documents.
-
-Return only valid JSON.
-Do not use markdown.
-Do not invent values.
-Use only the evidence provided.
-If a value cannot be found, set its value to null and confidence_score to 0.
-
-Required output shape:
-
-{
-  "metadata": {
-    "chunking": {
-      "chunks": <number>
-    },
-    "doc_id": "<string>",
-    "created_utc": "<string>",
-    "source_blob": "<string>",
-    "ir_blob": "<string>",
-    "cu_analyzer_id": "<string>"
-  },
-  "schema": {
-    "schema_id": "tax_1120s",
-    "schema_version": "2024"
-  },
-  "payload": {
-    "tax_year": {
-      "value": <string or null>,
-      "confidence_score": <number>
-    },
-    "corporation_name": {
-      "value": <string or null>,
-      "confidence_score": <number>
-    },
-    "employer_identification_number": {
-      "value": <string or null>,
-      "confidence_score": <number>
-    },
-    "business_activity_code": {
-      "value": <string or null>,
-      "confidence_score": <number>
-    },
-    "address": {
-      "street": {
-        "value": <string or null>,
-        "confidence_score": <number>
-      },
-      "city": {
-        "value": <string or null>,
-        "confidence_score": <number>
-      },
-      "state": {
-        "value": <string or null>,
-        "confidence_score": <number>
-      },
-      "zip_code": {
-        "value": <string or null>,
-        "confidence_score": <number>
-      }
-    },
-    "ordinary_business_income_loss": {
-      "value": <number or string or null>,
-      "confidence_score": <number>
-    },
-    "total_assets_end_of_year": {
-      "value": <number or string or null>,
-      "confidence_score": <number>
-    },
-    "cash": {
-      "value": <number or string or null>,
-      "confidence_score": <number>
-    },
-    "accounts_receivable": {
-      "value": <number or string or null>,
-      "confidence_score": <number>
-    }
-  }
-}
-
-Important:
-Only populate what is supported by evidence.
-The payload must always be an object.
-Do not add explanations.
-"""
-
-    user = {
-        "metadata_values": {
-            "doc_id": doc_id,
-            "created_utc": created_utc,
-            "source_blob": source_blob,
-            "ir_blob": ir_blob,
-            "cu_analyzer_id": cu_analyzer_id,
-        },
-        "chunk_count": len(evidence.get("lines", [])) + len(evidence.get("table_cells", [])),
-        "evidence": evidence,
-    }
-
-    return [
-        {"role": "system", "content": system.strip()},
-        {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
-    ]
+def _compact_lines(lines: List[Dict[str, Any]], limit: int = 400) -> List[Dict[str, Any]]:
+    compact: List[Dict[str, Any]] = []
+    for row in lines[:limit]:
+        text = (row.get("text") or "").strip()
+        if not text:
+            continue
+        compact.append(
+            {
+                "page": row.get("page"),
+                "text": text,
+                "confidence": row.get("confidence"),
+            }
+        )
+    return compact
 
 
-def _enforce_tax_payload_shape(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Force the payload into the exact leaf style:
-    each field is { value, confidence_score }
-    and parents later get confidence_score recursively.
-    """
-    payload = payload if isinstance(payload, dict) else {}
-
-    def get_leaf(key: str) -> Dict[str, Any]:
-        return _normalize_leaf_node(payload.get(key, {"value": None, "confidence_score": 0.0}))
-
-    address_raw = payload.get("address", {})
-    address_raw = address_raw if isinstance(address_raw, dict) else {}
-
-    address = {
-        "street": _normalize_leaf_node(address_raw.get("street", {"value": None, "confidence_score": 0.0})),
-        "city": _normalize_leaf_node(address_raw.get("city", {"value": None, "confidence_score": 0.0})),
-        "state": _normalize_leaf_node(address_raw.get("state", {"value": None, "confidence_score": 0.0})),
-        "zip_code": _normalize_leaf_node(address_raw.get("zip_code", {"value": None, "confidence_score": 0.0})),
-    }
-
-    normalized = {
-        "tax_year": get_leaf("tax_year"),
-        "corporation_name": get_leaf("corporation_name"),
-        "employer_identification_number": get_leaf("employer_identification_number"),
-        "business_activity_code": get_leaf("business_activity_code"),
-        "address": address,
-        "ordinary_business_income_loss": get_leaf("ordinary_business_income_loss"),
-        "total_assets_end_of_year": get_leaf("total_assets_end_of_year"),
-        "cash": get_leaf("cash"),
-        "accounts_receivable": get_leaf("accounts_receivable"),
-    }
-
-    return _add_parent_confidence(normalized)
+def _compact_paragraphs(paragraphs: List[Dict[str, Any]], limit: int = 250) -> List[Dict[str, Any]]:
+    compact: List[Dict[str, Any]] = []
+    for row in paragraphs[:limit]:
+        text = (row.get("text") or "").strip()
+        if not text:
+            continue
+        compact.append(
+            {
+                "page": row.get("page"),
+                "paragraph_index": row.get("paragraph_index"),
+                "role": row.get("role"),
+                "text": text,
+                "confidence": row.get("confidence"),
+            }
+        )
+    return compact
 
 
-def generate_tax_1120s_envelope(
+def _compact_table_cells(cells: List[Dict[str, Any]], limit: int = 1200) -> List[Dict[str, Any]]:
+    compact: List[Dict[str, Any]] = []
+    for row in cells[:limit]:
+        text = (row.get("text") or "").strip()
+        if not text:
+            continue
+        compact.append(
+            {
+                "page": row.get("page"),
+                "table_index": row.get("table_index"),
+                "row_index": row.get("row_index"),
+                "column_index": row.get("column_index"),
+                "kind": row.get("kind"),
+                "text": text,
+                "confidence": row.get("confidence"),
+            }
+        )
+    return compact
+
+
+def build_evidence_pack(
     raw_result: Dict[str, Any],
     *,
-    doc_id: str,
-    created_utc: str,
-    source_blob: str,
-    ir_blob: str,
-    cu_analyzer_id: str = "prebuilt-layout",
-    max_evidence_chars: Optional[int] = None,
+    max_chars: int = 35000,
 ) -> Dict[str, Any]:
-    """
-    Generate final JSON in this form:
+    lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
+    paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(raw_result, aggregate_mode="mean")
+    table_cells = ContentUnderstandingClient.extract_table_cells_with_confidence(raw_result, aggregate_mode="mean")
 
-    {
-      "metadata": {...},
-      "schema": {...},
-      "payload": {
-        "field_name": {
-          "value": ...,
-          "confidence_score": ...
-        },
-        "parent_object": {
-          ...
-          "confidence_score": ...
-        }
-      }
+    def sort_key(item: Dict[str, Any]) -> float:
+        confidence = _safe_float(item.get("confidence"))
+        return confidence if confidence is not None else 0.0
+
+    lines_sorted = sorted(lines, key=sort_key, reverse=True)
+    paragraphs_sorted = sorted(paragraphs, key=sort_key, reverse=True)
+    table_cells_sorted = sorted(table_cells, key=sort_key, reverse=True)
+
+    pack = {
+        "lines": _compact_lines(lines_sorted, limit=500),
+        "paragraphs": _compact_paragraphs(paragraphs_sorted, limit=250),
+        "table_cells": _compact_table_cells(table_cells_sorted, limit=1500),
     }
+
+    raw = json.dumps(pack, ensure_ascii=False)
+    if len(raw) <= max_chars:
+        return pack
+
+    ratio = max_chars / max(1, len(raw))
+    keep_lines = max(80, int(len(pack["lines"]) * ratio))
+    keep_paragraphs = max(40, int(len(pack["paragraphs"]) * ratio))
+    keep_cells = max(150, int(len(pack["table_cells"]) * ratio))
+
+    return {
+        "lines": pack["lines"][:keep_lines],
+        "paragraphs": pack["paragraphs"][:keep_paragraphs],
+        "table_cells": pack["table_cells"][:keep_cells],
+    }
+
+
+def detect_document_schema(raw_result: Dict[str, Any]) -> Dict[str, Any]:
     """
-    max_chars = max_evidence_chars or _safe_int(os.getenv("LLM_MAX_EVIDENCE_CHARS", "30000"), 30000)
-    evidence = build_evidence_pack_for_tax(raw_result, max_chars=max_chars)
+    Heuristic router for document family and schema.
+    """
+    lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
+    paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(raw_result, aggregate_mode="mean")
 
-    messages = _make_tax_1120s_prompt(
-        evidence,
-        doc_id=doc_id,
-        created_utc=created_utc,
-        source_blob=source_blob,
-        ir_blob=ir_blob,
-        cu_analyzer_id=cu_analyzer_id,
-    )
+    samples: List[str] = []
+    for row in lines[:120]:
+        text = (row.get("text") or "").strip()
+        if text:
+            samples.append(text.lower())
 
-    text = _azure_openai_chat_completion(
-        messages=messages,
-        temperature=0.0,
-        max_tokens=2500,
-    )
+    for row in paragraphs[:40]:
+        text = (row.get("text") or "").strip()
+        if text:
+            samples.append(text.lower())
 
+    joined = "\n".join(samples)
+
+    tax_patterns = {
+        "1120s": [
+            "form 1120-s",
+            "1120-s",
+            "u.s. income tax return for an s corporation",
+            "s corporation",
+            "schedule l",
+            "ordinary business income",
+            "employer identification number",
+            "internal revenue service",
+        ],
+        "k1": [
+            "schedule k-1",
+            "shareholder's share",
+            "partner's share",
+            "form 1065",
+            "form 1120s schedule k-1",
+        ],
+        "1040": [
+            "form 1040",
+            "u.s. individual income tax return",
+            "filing status",
+            "dependents",
+            "adjusted gross income",
+        ],
+    }
+
+    financial_patterns = {
+        "financial_statement": [
+            "balance sheet",
+            "statement of financial position",
+            "income statement",
+            "statement of cash flows",
+            "statement of owner equity",
+            "statement of owners equity",
+            "ratio analysis",
+            "current assets",
+            "current liabilities",
+            "retained earnings",
+            "net income",
+            "total assets",
+            "total liabilities",
+            "cash and cash equivalents",
+        ]
+    }
+
+    scores: Dict[str, float] = {
+        "tax_1120s": 0.0,
+        "tax_k1": 0.0,
+        "tax_1040": 0.0,
+        "financial_statement": 0.0,
+        "generic_document": 0.0,
+    }
+
+    for p in tax_patterns["1120s"]:
+        if p in joined:
+            scores["tax_1120s"] += 1.0
+
+    for p in tax_patterns["k1"]:
+        if p in joined:
+            scores["tax_k1"] += 1.0
+
+    for p in tax_patterns["1040"]:
+        if p in joined:
+            scores["tax_1040"] += 1.0
+
+    for p in financial_patterns["financial_statement"]:
+        if p in joined:
+            scores["financial_statement"] += 1.0
+
+    best_schema = max(scores, key=scores.get)
+    best_score = scores[best_schema]
+
+    if best_score <= 0:
+        return {
+            "document_type": "generic_document",
+            "document_subtype": "generic",
+            "schema_id": "generic_document",
+            "schema_version": "2024",
+            "confidence_score": 0.2,
+        }
+
+    if best_schema.startswith("tax_"):
+        subtype = best_schema.replace("tax_", "")
+        return {
+            "document_type": "tax_document",
+            "document_subtype": subtype,
+            "schema_id": best_schema,
+            "schema_version": "2024",
+            "confidence_score": round(min(0.99, 0.55 + (0.06 * best_score)), 3),
+        }
+
+    if best_schema == "financial_statement":
+        return {
+            "document_type": "financial_document",
+            "document_subtype": "statement",
+            "schema_id": "financial_statement",
+            "schema_version": "2024",
+            "confidence_score": round(min(0.99, 0.55 + (0.05 * best_score)), 3),
+        }
+
+    return {
+        "document_type": "generic_document",
+        "document_subtype": "generic",
+        "schema_id": "generic_document",
+        "schema_version": "2024",
+        "confidence_score": 0.2,
+    }
+
+
+def _extract_document_title(raw_result: Dict[str, Any]) -> Optional[str]:
+    paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(raw_result, aggregate_mode="mean")
+    if paragraphs:
+        first_page = [p for p in paragraphs if p.get("page") == 1 and (p.get("text") or "").strip()]
+        if first_page:
+            first_page.sort(key=lambda x: (x.get("paragraph_index", 999999), -(x.get("confidence") or 0.0)))
+            return first_page[0].get("text")
+
+    lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
+    first_page_lines = [l for l in lines if l.get("page") == 1 and (l.get("text") or "").strip()]
+    if first_page_lines:
+        first_page_lines.sort(key=lambda x: x.get("line_index", 999999))
+        return first_page_lines[0].get("text")
+
+    return None
+
+
+def _llm_json(messages: List[Dict[str, Any]], *, max_tokens: int = 3500) -> Dict[str, Any]:
+    text = _azure_openai_chat_completion(messages=messages, temperature=0.0, max_tokens=max_tokens)
     try:
         parsed = json.loads(text)
     except Exception as exc:
@@ -786,33 +828,454 @@ def generate_tax_1120s_envelope(
     if not isinstance(parsed, dict):
         raise LLMError("LLM root must be a JSON object")
 
-    raw_payload = parsed.get("payload", {})
-    payload = _enforce_tax_payload_shape(raw_payload)
+    return parsed
 
-    chunk_count = 0
-    root = raw_result.get("result")
-    if isinstance(root, dict):
-        contents = root.get("contents")
-        if isinstance(contents, list):
-            chunk_count = len(contents)
 
-    final_json = {
-        "metadata": {
-            "chunking": {
-                "chunks": chunk_count,
+def _make_tax_prompt(
+    evidence: Dict[str, Any],
+    *,
+    schema_id: str,
+) -> List[Dict[str, Any]]:
+    system = """
+You are a tax document extraction engine.
+
+Return only valid JSON.
+Do not use markdown.
+Do not invent values.
+Use only the evidence provided.
+If a value cannot be found, set its value to null and confidence_score to 0.
+
+You must return a JSON object with this structure:
+
+{
+  "payload": {
+    "form_type": {"value": <string or null>, "confidence_score": <number>},
+    "tax_year": {"value": <string or null>, "confidence_score": <number>},
+    "entity_name": {"value": <string or null>, "confidence_score": <number>},
+    "employer_identification_number": {"value": <string or null>, "confidence_score": <number>},
+    "business_activity_code": {"value": <string or null>, "confidence_score": <number>},
+    "address": {
+      "street": {"value": <string or null>, "confidence_score": <number>},
+      "city": {"value": <string or null>, "confidence_score": <number>},
+      "state": {"value": <string or null>, "confidence_score": <number>},
+      "zip_code": {"value": <string or null>, "confidence_score": <number>}
+    },
+    "key_amounts": {
+      "ordinary_business_income_loss": {"value": <number or string or null>, "confidence_score": <number>},
+      "total_assets_end_of_year": {"value": <number or string or null>, "confidence_score": <number>},
+      "cash": {"value": <number or string or null>, "confidence_score": <number>},
+      "accounts_receivable": {"value": <number or string or null>, "confidence_score": <number>}
+    }
+  }
+}
+
+The payload must always be an object.
+Only fill fields supported by evidence.
+"""
+    user = {
+        "schema_id": schema_id,
+        "evidence": evidence,
+    }
+    return [
+        {"role": "system", "content": system.strip()},
+        {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+    ]
+
+
+def _make_financial_prompt(
+    evidence: Dict[str, Any],
+    *,
+    schema_id: str,
+) -> List[Dict[str, Any]]:
+    system = """
+You are a financial document extraction engine.
+
+Return only valid JSON.
+Do not use markdown.
+Do not invent values.
+Use only the evidence provided.
+If a value cannot be found, set its value to null and confidence_score to 0.
+
+You must return a JSON object with this structure:
+
+{
+  "payload": {
+    "statements_included": [
+      {"value": <string or null>, "confidence_score": <number>}
+    ],
+    "balance_sheet": {
+      "current_assets": {
+        "cash_and_cash_equivalents": {"value": <number or string or null>, "confidence_score": <number>},
+        "accounts_receivable": {"value": <number or string or null>, "confidence_score": <number>},
+        "inventory": {"value": <number or string or null>, "confidence_score": <number>}
+      },
+      "non_current_assets": {
+        "property_plant_equipment": {"value": <number or string or null>, "confidence_score": <number>}
+      },
+      "current_liabilities": {
+        "accounts_payable": {"value": <number or string or null>, "confidence_score": <number>}
+      },
+      "equity": {
+        "owner_equity": {"value": <number or string or null>, "confidence_score": <number>},
+        "retained_earnings": {"value": <number or string or null>, "confidence_score": <number>}
+      },
+      "totals": {
+        "total_assets": {"value": <number or string or null>, "confidence_score": <number>},
+        "total_liabilities": {"value": <number or string or null>, "confidence_score": <number>},
+        "total_equity": {"value": <number or string or null>, "confidence_score": <number>}
+      }
+    },
+    "income_statement": {
+      "revenue": {"value": <number or string or null>, "confidence_score": <number>},
+      "cost_of_goods_sold": {"value": <number or string or null>, "confidence_score": <number>},
+      "operating_expenses": {"value": <number or string or null>, "confidence_score": <number>},
+      "net_income": {"value": <number or string or null>, "confidence_score": <number>}
+    },
+    "cash_flow_statement": {
+      "net_cash_from_operations": {"value": <number or string or null>, "confidence_score": <number>},
+      "net_cash_from_investing": {"value": <number or string or null>, "confidence_score": <number>},
+      "net_cash_from_financing": {"value": <number or string or null>, "confidence_score": <number>}
+    }
+  }
+}
+
+The payload must always be an object.
+Only fill fields supported by evidence.
+"""
+    user = {
+        "schema_id": schema_id,
+        "evidence": evidence,
+    }
+    return [
+        {"role": "system", "content": system.strip()},
+        {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+    ]
+
+
+def _normalize_tax_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = payload if isinstance(payload, dict) else {}
+
+    def leaf_at(container: Dict[str, Any], key: str) -> Dict[str, Any]:
+        return _normalize_leaf_node(container.get(key, {"value": None, "confidence_score": 0.0}))
+
+    address_raw = payload.get("address", {})
+    address_raw = address_raw if isinstance(address_raw, dict) else {}
+
+    key_amounts_raw = payload.get("key_amounts", {})
+    key_amounts_raw = key_amounts_raw if isinstance(key_amounts_raw, dict) else {}
+
+    normalized = {
+        "form_type": leaf_at(payload, "form_type"),
+        "tax_year": leaf_at(payload, "tax_year"),
+        "entity_name": leaf_at(payload, "entity_name"),
+        "employer_identification_number": leaf_at(payload, "employer_identification_number"),
+        "business_activity_code": leaf_at(payload, "business_activity_code"),
+        "address": {
+            "street": _normalize_leaf_node(address_raw.get("street", {"value": None, "confidence_score": 0.0})),
+            "city": _normalize_leaf_node(address_raw.get("city", {"value": None, "confidence_score": 0.0})),
+            "state": _normalize_leaf_node(address_raw.get("state", {"value": None, "confidence_score": 0.0})),
+            "zip_code": _normalize_leaf_node(address_raw.get("zip_code", {"value": None, "confidence_score": 0.0})),
+        },
+        "key_amounts": {
+            "ordinary_business_income_loss": _normalize_leaf_node(
+                key_amounts_raw.get("ordinary_business_income_loss", {"value": None, "confidence_score": 0.0})
+            ),
+            "total_assets_end_of_year": _normalize_leaf_node(
+                key_amounts_raw.get("total_assets_end_of_year", {"value": None, "confidence_score": 0.0})
+            ),
+            "cash": _normalize_leaf_node(
+                key_amounts_raw.get("cash", {"value": None, "confidence_score": 0.0})
+            ),
+            "accounts_receivable": _normalize_leaf_node(
+                key_amounts_raw.get("accounts_receivable", {"value": None, "confidence_score": 0.0})
+            ),
+        },
+    }
+
+    return _add_parent_confidence(normalized)
+
+
+def _normalize_financial_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = payload if isinstance(payload, dict) else {}
+
+    def leaf_from(container: Dict[str, Any], key: str) -> Dict[str, Any]:
+        return _normalize_leaf_node(container.get(key, {"value": None, "confidence_score": 0.0}))
+
+    statements_raw = payload.get("statements_included", [])
+    statements_included: List[Dict[str, Any]] = []
+    if isinstance(statements_raw, list):
+        for item in statements_raw:
+            statements_included.append(_normalize_leaf_node(item))
+    else:
+        statements_included = []
+
+    bs_raw = payload.get("balance_sheet", {})
+    bs_raw = bs_raw if isinstance(bs_raw, dict) else {}
+    bs_current_assets = bs_raw.get("current_assets", {})
+    bs_current_assets = bs_current_assets if isinstance(bs_current_assets, dict) else {}
+    bs_non_current_assets = bs_raw.get("non_current_assets", {})
+    bs_non_current_assets = bs_non_current_assets if isinstance(bs_non_current_assets, dict) else {}
+    bs_current_liabilities = bs_raw.get("current_liabilities", {})
+    bs_current_liabilities = bs_current_liabilities if isinstance(bs_current_liabilities, dict) else {}
+    bs_equity = bs_raw.get("equity", {})
+    bs_equity = bs_equity if isinstance(bs_equity, dict) else {}
+    bs_totals = bs_raw.get("totals", {})
+    bs_totals = bs_totals if isinstance(bs_totals, dict) else {}
+
+    is_raw = payload.get("income_statement", {})
+    is_raw = is_raw if isinstance(is_raw, dict) else {}
+
+    cf_raw = payload.get("cash_flow_statement", {})
+    cf_raw = cf_raw if isinstance(cf_raw, dict) else {}
+
+    normalized = {
+        "statements_included": statements_included,
+        "balance_sheet": {
+            "current_assets": {
+                "cash_and_cash_equivalents": _normalize_leaf_node(
+                    bs_current_assets.get("cash_and_cash_equivalents", {"value": None, "confidence_score": 0.0})
+                ),
+                "accounts_receivable": _normalize_leaf_node(
+                    bs_current_assets.get("accounts_receivable", {"value": None, "confidence_score": 0.0})
+                ),
+                "inventory": _normalize_leaf_node(
+                    bs_current_assets.get("inventory", {"value": None, "confidence_score": 0.0})
+                ),
             },
+            "non_current_assets": {
+                "property_plant_equipment": _normalize_leaf_node(
+                    bs_non_current_assets.get("property_plant_equipment", {"value": None, "confidence_score": 0.0})
+                ),
+            },
+            "current_liabilities": {
+                "accounts_payable": _normalize_leaf_node(
+                    bs_current_liabilities.get("accounts_payable", {"value": None, "confidence_score": 0.0})
+                ),
+            },
+            "equity": {
+                "owner_equity": _normalize_leaf_node(
+                    bs_equity.get("owner_equity", {"value": None, "confidence_score": 0.0})
+                ),
+                "retained_earnings": _normalize_leaf_node(
+                    bs_equity.get("retained_earnings", {"value": None, "confidence_score": 0.0})
+                ),
+            },
+            "totals": {
+                "total_assets": _normalize_leaf_node(
+                    bs_totals.get("total_assets", {"value": None, "confidence_score": 0.0})
+                ),
+                "total_liabilities": _normalize_leaf_node(
+                    bs_totals.get("total_liabilities", {"value": None, "confidence_score": 0.0})
+                ),
+                "total_equity": _normalize_leaf_node(
+                    bs_totals.get("total_equity", {"value": None, "confidence_score": 0.0})
+                ),
+            },
+        },
+        "income_statement": {
+            "revenue": _normalize_leaf_node(is_raw.get("revenue", {"value": None, "confidence_score": 0.0})),
+            "cost_of_goods_sold": _normalize_leaf_node(
+                is_raw.get("cost_of_goods_sold", {"value": None, "confidence_score": 0.0})
+            ),
+            "operating_expenses": _normalize_leaf_node(
+                is_raw.get("operating_expenses", {"value": None, "confidence_score": 0.0})
+            ),
+            "net_income": _normalize_leaf_node(
+                is_raw.get("net_income", {"value": None, "confidence_score": 0.0})
+            ),
+        },
+        "cash_flow_statement": {
+            "net_cash_from_operations": _normalize_leaf_node(
+                cf_raw.get("net_cash_from_operations", {"value": None, "confidence_score": 0.0})
+            ),
+            "net_cash_from_investing": _normalize_leaf_node(
+                cf_raw.get("net_cash_from_investing", {"value": None, "confidence_score": 0.0})
+            ),
+            "net_cash_from_financing": _normalize_leaf_node(
+                cf_raw.get("net_cash_from_financing", {"value": None, "confidence_score": 0.0})
+            ),
+        },
+    }
+
+    return _add_parent_confidence(normalized)
+
+
+def build_tax_payload(
+    raw_result: Dict[str, Any],
+    *,
+    schema_id: str,
+) -> Dict[str, Any]:
+    evidence = build_evidence_pack(
+        raw_result,
+        max_chars=_safe_int(os.getenv("LLM_MAX_EVIDENCE_CHARS", "35000"), 35000),
+    )
+    messages = _make_tax_prompt(evidence, schema_id=schema_id)
+    parsed = _llm_json(messages, max_tokens=3200)
+    payload = parsed.get("payload", {})
+    return _normalize_tax_payload(payload if isinstance(payload, dict) else {})
+
+
+def build_financial_payload(
+    raw_result: Dict[str, Any],
+    *,
+    schema_id: str,
+) -> Dict[str, Any]:
+    evidence = build_evidence_pack(
+        raw_result,
+        max_chars=_safe_int(os.getenv("LLM_MAX_EVIDENCE_CHARS", "35000"), 35000),
+    )
+    messages = _make_financial_prompt(evidence, schema_id=schema_id)
+    parsed = _llm_json(messages, max_tokens=3500)
+    payload = parsed.get("payload", {})
+    return _normalize_financial_payload(payload if isinstance(payload, dict) else {})
+
+
+def build_generic_payload(raw_result: Dict[str, Any]) -> Dict[str, Any]:
+    pages = list(ContentUnderstandingClient.iter_pages(raw_result))
+    lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
+    paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(raw_result, aggregate_mode="mean")
+    table_cells = ContentUnderstandingClient.extract_table_cells_with_confidence(raw_result, aggregate_mode="mean")
+
+    titles: List[Dict[str, Any]] = []
+    first_page_lines = [x for x in lines if x.get("page") == 1 and (x.get("text") or "").strip()]
+    first_page_lines.sort(key=lambda x: x.get("line_index", 999999))
+    for idx, line in enumerate(first_page_lines[:5]):
+        titles.append(
+            {
+                "value": line.get("text"),
+                "confidence_score": round(_safe_float(line.get("confidence")) or 0.0, 3),
+                "page": line.get("page"),
+                "title_index": idx,
+            }
+        )
+
+    paragraph_items: List[Dict[str, Any]] = []
+    source_paragraphs = paragraphs if paragraphs else lines
+    for idx, row in enumerate(source_paragraphs):
+        text = (row.get("text") or "").strip()
+        if not text:
+            continue
+        paragraph_items.append(
+            {
+                "value": text,
+                "confidence_score": round(_safe_float(row.get("confidence")) or 0.0, 3),
+                "page": row.get("page"),
+                "paragraph_index": idx,
+            }
+        )
+
+    tables_map: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
+    for cell in table_cells:
+        key = (_safe_int(cell.get("page"), 0), _safe_int(cell.get("table_index"), 0))
+        tables_map.setdefault(key, []).append(cell)
+
+    tables: List[Dict[str, Any]] = []
+    for (page, table_index), cells in sorted(tables_map.items(), key=lambda x: (x[0][0], x[0][1])):
+        max_row = max((_safe_int(c.get("row_index"), 0) for c in cells), default=-1)
+        max_col = max((_safe_int(c.get("column_index"), 0) for c in cells), default=-1)
+
+        rows: List[List[Dict[str, Any]]] = []
+        confs: List[float] = []
+
+        for r in range(max_row + 1):
+            row_items: List[Dict[str, Any]] = []
+            for c in range(max_col + 1):
+                matched = next(
+                    (
+                        x for x in cells
+                        if _safe_int(x.get("row_index"), -1) == r and _safe_int(x.get("column_index"), -1) == c
+                    ),
+                    None,
+                )
+                if matched is None:
+                    row_items.append({"value": None, "confidence_score": 0.0})
+                else:
+                    conf = round(_safe_float(matched.get("confidence")) or 0.0, 3)
+                    row_items.append(
+                        {
+                            "value": matched.get("text"),
+                            "confidence_score": conf,
+                        }
+                    )
+                    if (matched.get("text") or "").strip():
+                        confs.append(conf)
+            rows.append(row_items)
+
+        tables.append(
+            {
+                "page": page,
+                "table_index": table_index,
+                "rows": rows,
+                "confidence_score": round(_mean(confs) or 0.0, 3),
+            }
+        )
+
+    payload = {
+        "titles": titles,
+        "paragraphs": paragraph_items,
+        "tables": tables,
+        "page_count": {
+            "value": len(pages),
+            "confidence_score": 1.0,
+        },
+    }
+
+    return _add_parent_confidence(payload)
+
+
+def build_dynamic_document_envelope(
+    raw_result: Dict[str, Any],
+    *,
+    doc_id: str,
+    created_utc: str,
+    source_blob: str,
+    ir_blob: str,
+    cu_analyzer_id: str = "prebuilt-layout",
+) -> Dict[str, Any]:
+    """
+    Main entry point for your app.
+
+    It:
+    1 detects the schema dynamically
+    2 builds the right payload
+    3 returns a fixed common envelope
+    """
+    pages = list(ContentUnderstandingClient.iter_pages(raw_result))
+    route = detect_document_schema(raw_result)
+
+    schema_id = route["schema_id"]
+    schema_version = route["schema_version"]
+    document_type = route["document_type"]
+    document_subtype = route["document_subtype"]
+    routing_confidence = route["confidence_score"]
+
+    if schema_id.startswith("tax_"):
+        payload = build_tax_payload(raw_result, schema_id=schema_id)
+    elif schema_id == "financial_statement":
+        payload = build_financial_payload(raw_result, schema_id=schema_id)
+    else:
+        payload = build_generic_payload(raw_result)
+
+    envelope = {
+        "metadata": {
+            "document_title": _extract_document_title(raw_result),
             "doc_id": doc_id,
             "created_utc": created_utc,
             "source_blob": source_blob,
             "ir_blob": ir_blob,
             "cu_analyzer_id": cu_analyzer_id,
+            "document_type": document_type,
+            "document_subtype": document_subtype,
+            "routing_confidence_score": routing_confidence,
+            "chunking": {
+                "chunks": len(pages),
+            },
         },
         "schema": {
-            "schema_id": "tax_1120s",
-            "schema_version": "2024",
+            "schema_id": schema_id,
+            "schema_version": schema_version,
         },
         "payload": payload,
     }
 
-    final_json["payload"] = _add_parent_confidence(final_json["payload"])
-    return final_json
+    return envelope
