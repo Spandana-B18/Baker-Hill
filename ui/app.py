@@ -8,6 +8,7 @@ This version:
 4. Saves a small run log to BLOB_LOG_CONTAINER
 5. Shows only a preview on screen
 6. Provides a download option for the full raw extracted JSON
+7. Uses input file name plus timestamp for downloaded JSON file names
 """
 
 import json
@@ -100,6 +101,12 @@ def download_blob_bytes(container_name: str, blob_name: str) -> bytes:
     container_client = get_container_client(container_name)
     blob_client = container_client.get_blob_client(blob_name)
     return blob_client.download_blob().readall()
+
+
+def make_output_json_filename(input_file_name: str, timestamp_utc: str, suffix: str = "raw_extracted") -> str:
+    base_name = os.path.splitext(input_file_name)[0]
+    safe_base_name = "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in base_name)
+    return f"{safe_base_name}_{timestamp_utc}_{suffix}.json"
 
 
 def build_raw_preview(raw_result: dict) -> dict:
@@ -214,7 +221,6 @@ if uploaded_file:
                 raw_json_blob = f"{created_utc}_{doc_id}.content_understanding_raw.json"
                 log_blob = f"{created_utc}_{doc_id}.run_log.json"
 
-                # Save original input file
                 upload_bytes_to_blob(
                     container_name=BLOB_INPUT_CONTAINER,
                     blob_name=source_blob,
@@ -235,7 +241,6 @@ if uploaded_file:
                     content_type=content_type,
                 )
 
-                # Save raw extracted JSON
                 upload_json_to_blob(
                     container_name=BLOB_OUTPUT_CONTAINER,
                     blob_name=raw_json_blob,
@@ -244,7 +249,6 @@ if uploaded_file:
 
                 raw_preview = build_raw_preview(raw_result)
 
-                # Save small run log
                 log_data = {
                     "doc_id": doc_id,
                     "created_utc": created_utc,
@@ -308,10 +312,17 @@ if "raw_json_blob" in st.session_state:
 
     try:
         raw_bytes = download_blob_bytes(BLOB_OUTPUT_CONTAINER, st.session_state["raw_json_blob"])
+
+        download_file_name = make_output_json_filename(
+            input_file_name=st.session_state.get("file_name", "document.pdf"),
+            timestamp_utc=st.session_state.get("created_utc", "unknown"),
+            suffix="raw_extracted",
+        )
+
         st.download_button(
             "Download full raw extracted JSON",
             data=raw_bytes,
-            file_name="content_understanding_result.json",
+            file_name=download_file_name,
             mime="application/json",
             use_container_width=True,
         )
