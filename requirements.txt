@@ -1,7 +1,8 @@
 streamlit
 python_dotenv
 azure_storage_blob
-azure_ai_documentintelligence
+azure-ai-contentunderstanding
 openai
 jsonschema
 pydantic
+azure-core
