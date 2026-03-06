@@ -1,24 +1,18 @@
 """
 conf_score.py
 
-Production ready module for:
+Updated version with stronger financial document handling.
 
-1. Calling Azure Content Understanding
-2. Extracting words, lines, table cells, and paragraphs with confidence
-3. Detecting document type dynamically
-4. Building a dynamic envelope for tax documents, financial documents, or generic documents
-5. Using Azure OpenAI to structure tax and financial payloads
-6. Adding confidence_score to leaves and parent objects
+What changed
 
-Expected environment variables for Azure OpenAI:
-AZURE_OPENAI_ENDPOINT
-AZURE_OPENAI_KEY
-AZURE_OPENAI_DEPLOYMENT
-AZURE_OPENAI_API_VERSION
+1. Financial documents are no longer forced only into a tiny normalized schema
+2. Financial payload now preserves raw statement tables and line items
+3. A normalized financial summary is still included when line items can be mapped
+4. Tax documents can still use the LLM path
+5. Generic documents still fall back to titles, paragraphs, and tables
 
-Optional:
-LLM_TIMEOUT_SEC
-LLM_MAX_EVIDENCE_CHARS
+Main entry point
+build_dynamic_document_envelope(...)
 """
 
 from __future__ import annotations
@@ -111,6 +105,92 @@ def _extract_spans(node: Dict[str, Any]) -> List[Span]:
 
 def default_analyzer_id() -> str:
     return "prebuilt-layout"
+
+
+def _normalize_space(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def _is_numeric_text(text: str) -> bool:
+    if not text:
+        return False
+    t = text.strip()
+    if not t:
+        return False
+    t = t.replace(",", "").replace("$", "").replace("%", "")
+    t = t.replace("(", "-").replace(")", "")
+    return bool(re.fullmatch(r"[-+]?\d+(\.\d+)?", t))
+
+
+def _parse_numeric_text(text: str) -> Optional[float]:
+    if not _is_numeric_text(text):
+        return None
+    t = text.strip().replace(",", "").replace("$", "").replace("%", "")
+    t = t.replace("(", "-").replace(")", "")
+    try:
+        return float(t)
+    except Exception:
+        return None
+
+
+def _lower(text: Any) -> str:
+    return str(text or "").lower()
+
+
+def _make_leaf(value: Any, confidence_score: Optional[float]) -> Dict[str, Any]:
+    return {
+        "value": value,
+        "confidence_score": round(float(confidence_score or 0.0), 3),
+    }
+
+
+def _normalize_leaf_node(node: Any) -> Dict[str, Any]:
+    if isinstance(node, dict) and "value" in node and "confidence_score" in node:
+        conf = _safe_float(node.get("confidence_score"))
+        return {
+            "value": node.get("value"),
+            "confidence_score": round(conf or 0.0, 3),
+        }
+    return {
+        "value": node,
+        "confidence_score": 0.0,
+    }
+
+
+def _collect_child_confidences(node: Any) -> List[float]:
+    values: List[float] = []
+    if isinstance(node, dict):
+        if "confidence_score" in node and isinstance(node.get("confidence_score"), (int, float)):
+            values.append(float(node["confidence_score"]))
+        for key, value in node.items():
+            if key == "confidence_score":
+                continue
+            values.extend(_collect_child_confidences(value))
+    elif isinstance(node, list):
+        for item in node:
+            values.extend(_collect_child_confidences(item))
+    return values
+
+
+def _add_parent_confidence(node: Any) -> Any:
+    if isinstance(node, dict):
+        for key, value in list(node.items()):
+            node[key] = _add_parent_confidence(value)
+
+        is_leaf = set(node.keys()) == {"value", "confidence_score"}
+        if not is_leaf:
+            child_confidences: List[float] = []
+            for key, value in node.items():
+                if key == "confidence_score":
+                    continue
+                child_confidences.extend(_collect_child_confidences(value))
+            node["confidence_score"] = round(_mean(child_confidences) or 0.0, 3)
+        return node
+
+    if isinstance(node, list):
+        return [_add_parent_confidence(item) for item in node]
+
+    return node
 
 
 class ContentUnderstandingClient:
@@ -335,7 +415,7 @@ class ContentUnderstandingClient:
         result: Dict[str, Any],
         *,
         aggregate_mode: str = "mean",
-        max_lines_per_page: int = 300,
+        max_lines_per_page: int = 400,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         words_by_page = ContentUnderstandingClient._words_index_by_page(result)
@@ -377,7 +457,7 @@ class ContentUnderstandingClient:
         result: Dict[str, Any],
         *,
         aggregate_mode: str = "mean",
-        max_paragraphs_per_page: int = 250,
+        max_paragraphs_per_page: int = 300,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         words_by_page = ContentUnderstandingClient._words_index_by_page(result)
@@ -420,8 +500,8 @@ class ContentUnderstandingClient:
         result: Dict[str, Any],
         *,
         aggregate_mode: str = "mean",
-        max_tables_per_page: int = 50,
-        max_cells_per_table: int = 800,
+        max_tables_per_page: int = 100,
+        max_cells_per_table: int = 1200,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         words_by_page = ContentUnderstandingClient._words_index_by_page(result)
@@ -521,67 +601,23 @@ def _azure_openai_chat_completion(
     return content.strip()
 
 
-def _normalize_leaf_node(node: Any) -> Dict[str, Any]:
-    if isinstance(node, dict) and "value" in node and "confidence_score" in node:
-        confidence = _safe_float(node.get("confidence_score"))
-        return {
-            "value": node.get("value"),
-            "confidence_score": 0.0 if confidence is None else round(confidence, 3),
-        }
+def _llm_json(messages: List[Dict[str, Any]], *, max_tokens: int = 3500) -> Dict[str, Any]:
+    text = _azure_openai_chat_completion(messages=messages, temperature=0.0, max_tokens=max_tokens)
+    try:
+        parsed = json.loads(text)
+    except Exception as exc:
+        raise LLMError(f"LLM did not return valid JSON: {exc}")
 
-    return {
-        "value": node,
-        "confidence_score": 0.0,
-    }
+    if not isinstance(parsed, dict):
+        raise LLMError("LLM root must be a JSON object")
 
-
-def _collect_child_confidences(node: Any) -> List[float]:
-    confidences: List[float] = []
-
-    if isinstance(node, dict):
-        if "confidence_score" in node and isinstance(node.get("confidence_score"), (int, float)):
-            confidences.append(float(node["confidence_score"]))
-
-        for key, value in node.items():
-            if key == "confidence_score":
-                continue
-            confidences.extend(_collect_child_confidences(value))
-
-    elif isinstance(node, list):
-        for item in node:
-            confidences.extend(_collect_child_confidences(item))
-
-    return confidences
+    return parsed
 
 
-def _add_parent_confidence(node: Any) -> Any:
-    if isinstance(node, dict):
-        for key, value in list(node.items()):
-            node[key] = _add_parent_confidence(value)
-
-        is_leaf = set(node.keys()) == {"value", "confidence_score"}
-
-        if not is_leaf:
-            child_confidences: List[float] = []
-            for key, value in node.items():
-                if key == "confidence_score":
-                    continue
-                child_confidences.extend(_collect_child_confidences(value))
-
-            node["confidence_score"] = round(_mean(child_confidences) or 0.0, 3)
-
-        return node
-
-    if isinstance(node, list):
-        return [_add_parent_confidence(item) for item in node]
-
-    return node
-
-
-def _compact_lines(lines: List[Dict[str, Any]], limit: int = 400) -> List[Dict[str, Any]]:
+def _compact_lines(lines: List[Dict[str, Any]], limit: int = 500) -> List[Dict[str, Any]]:
     compact: List[Dict[str, Any]] = []
     for row in lines[:limit]:
-        text = (row.get("text") or "").strip()
+        text = _normalize_space(row.get("text", ""))
         if not text:
             continue
         compact.append(
@@ -597,7 +633,7 @@ def _compact_lines(lines: List[Dict[str, Any]], limit: int = 400) -> List[Dict[s
 def _compact_paragraphs(paragraphs: List[Dict[str, Any]], limit: int = 250) -> List[Dict[str, Any]]:
     compact: List[Dict[str, Any]] = []
     for row in paragraphs[:limit]:
-        text = (row.get("text") or "").strip()
+        text = _normalize_space(row.get("text", ""))
         if not text:
             continue
         compact.append(
@@ -612,10 +648,10 @@ def _compact_paragraphs(paragraphs: List[Dict[str, Any]], limit: int = 250) -> L
     return compact
 
 
-def _compact_table_cells(cells: List[Dict[str, Any]], limit: int = 1200) -> List[Dict[str, Any]]:
+def _compact_table_cells(cells: List[Dict[str, Any]], limit: int = 1500) -> List[Dict[str, Any]]:
     compact: List[Dict[str, Any]] = []
     for row in cells[:limit]:
-        text = (row.get("text") or "").strip()
+        text = _normalize_space(row.get("text", ""))
         if not text:
             continue
         compact.append(
@@ -672,20 +708,17 @@ def build_evidence_pack(
 
 
 def detect_document_schema(raw_result: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Heuristic router for document family and schema.
-    """
     lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
     paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(raw_result, aggregate_mode="mean")
 
     samples: List[str] = []
-    for row in lines[:120]:
-        text = (row.get("text") or "").strip()
+    for row in lines[:140]:
+        text = _normalize_space(row.get("text", ""))
         if text:
             samples.append(text.lower())
 
-    for row in paragraphs[:40]:
-        text = (row.get("text") or "").strip()
+    for row in paragraphs[:60]:
+        text = _normalize_space(row.get("text", ""))
         if text:
             samples.append(text.lower())
 
@@ -694,7 +727,6 @@ def detect_document_schema(raw_result: Dict[str, Any]) -> Dict[str, Any]:
     tax_patterns = {
         "1120s": [
             "form 1120-s",
-            "1120-s",
             "u.s. income tax return for an s corporation",
             "s corporation",
             "schedule l",
@@ -713,29 +745,28 @@ def detect_document_schema(raw_result: Dict[str, Any]) -> Dict[str, Any]:
             "form 1040",
             "u.s. individual income tax return",
             "filing status",
-            "dependents",
             "adjusted gross income",
         ],
     }
 
-    financial_patterns = {
-        "financial_statement": [
-            "balance sheet",
-            "statement of financial position",
-            "income statement",
-            "statement of cash flows",
-            "statement of owner equity",
-            "statement of owners equity",
-            "ratio analysis",
-            "current assets",
-            "current liabilities",
-            "retained earnings",
-            "net income",
-            "total assets",
-            "total liabilities",
-            "cash and cash equivalents",
-        ]
-    }
+    financial_patterns = [
+        "balance sheet",
+        "statement of financial position",
+        "income statement",
+        "statement of cash flows",
+        "statement of owner equity",
+        "statement of owners equity",
+        "ratio analysis",
+        "current assets",
+        "current liabilities",
+        "retained earnings",
+        "net income",
+        "total assets",
+        "total liabilities",
+        "cash and cash equivalents",
+        "accounts receivable",
+        "inventory",
+    ]
 
     scores: Dict[str, float] = {
         "tax_1120s": 0.0,
@@ -757,7 +788,7 @@ def detect_document_schema(raw_result: Dict[str, Any]) -> Dict[str, Any]:
         if p in joined:
             scores["tax_1040"] += 1.0
 
-    for p in financial_patterns["financial_statement"]:
+    for p in financial_patterns:
         if p in joined:
             scores["financial_statement"] += 1.0
 
@@ -789,7 +820,7 @@ def detect_document_schema(raw_result: Dict[str, Any]) -> Dict[str, Any]:
             "document_subtype": "statement",
             "schema_id": "financial_statement",
             "schema_version": "2024",
-            "confidence_score": round(min(0.99, 0.55 + (0.05 * best_score)), 3),
+            "confidence_score": round(min(0.99, 0.55 + (0.04 * best_score)), 3),
         }
 
     return {
@@ -804,31 +835,18 @@ def detect_document_schema(raw_result: Dict[str, Any]) -> Dict[str, Any]:
 def _extract_document_title(raw_result: Dict[str, Any]) -> Optional[str]:
     paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(raw_result, aggregate_mode="mean")
     if paragraphs:
-        first_page = [p for p in paragraphs if p.get("page") == 1 and (p.get("text") or "").strip()]
+        first_page = [p for p in paragraphs if p.get("page") == 1 and _normalize_space(p.get("text", ""))]
         if first_page:
             first_page.sort(key=lambda x: (x.get("paragraph_index", 999999), -(x.get("confidence") or 0.0)))
-            return first_page[0].get("text")
+            return _normalize_space(first_page[0].get("text", "")) or None
 
     lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
-    first_page_lines = [l for l in lines if l.get("page") == 1 and (l.get("text") or "").strip()]
+    first_page_lines = [l for l in lines if l.get("page") == 1 and _normalize_space(l.get("text", ""))]
     if first_page_lines:
         first_page_lines.sort(key=lambda x: x.get("line_index", 999999))
-        return first_page_lines[0].get("text")
+        return _normalize_space(first_page_lines[0].get("text", "")) or None
 
     return None
-
-
-def _llm_json(messages: List[Dict[str, Any]], *, max_tokens: int = 3500) -> Dict[str, Any]:
-    text = _azure_openai_chat_completion(messages=messages, temperature=0.0, max_tokens=max_tokens)
-    try:
-        parsed = json.loads(text)
-    except Exception as exc:
-        raise LLMError(f"LLM did not return valid JSON: {exc}")
-
-    if not isinstance(parsed, dict):
-        raise LLMError("LLM root must be a JSON object")
-
-    return parsed
 
 
 def _make_tax_prompt(
@@ -845,7 +863,7 @@ Do not invent values.
 Use only the evidence provided.
 If a value cannot be found, set its value to null and confidence_score to 0.
 
-You must return a JSON object with this structure:
+Return this structure:
 
 {
   "payload": {
@@ -868,79 +886,6 @@ You must return a JSON object with this structure:
     }
   }
 }
-
-The payload must always be an object.
-Only fill fields supported by evidence.
-"""
-    user = {
-        "schema_id": schema_id,
-        "evidence": evidence,
-    }
-    return [
-        {"role": "system", "content": system.strip()},
-        {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
-    ]
-
-
-def _make_financial_prompt(
-    evidence: Dict[str, Any],
-    *,
-    schema_id: str,
-) -> List[Dict[str, Any]]:
-    system = """
-You are a financial document extraction engine.
-
-Return only valid JSON.
-Do not use markdown.
-Do not invent values.
-Use only the evidence provided.
-If a value cannot be found, set its value to null and confidence_score to 0.
-
-You must return a JSON object with this structure:
-
-{
-  "payload": {
-    "statements_included": [
-      {"value": <string or null>, "confidence_score": <number>}
-    ],
-    "balance_sheet": {
-      "current_assets": {
-        "cash_and_cash_equivalents": {"value": <number or string or null>, "confidence_score": <number>},
-        "accounts_receivable": {"value": <number or string or null>, "confidence_score": <number>},
-        "inventory": {"value": <number or string or null>, "confidence_score": <number>}
-      },
-      "non_current_assets": {
-        "property_plant_equipment": {"value": <number or string or null>, "confidence_score": <number>}
-      },
-      "current_liabilities": {
-        "accounts_payable": {"value": <number or string or null>, "confidence_score": <number>}
-      },
-      "equity": {
-        "owner_equity": {"value": <number or string or null>, "confidence_score": <number>},
-        "retained_earnings": {"value": <number or string or null>, "confidence_score": <number>}
-      },
-      "totals": {
-        "total_assets": {"value": <number or string or null>, "confidence_score": <number>},
-        "total_liabilities": {"value": <number or string or null>, "confidence_score": <number>},
-        "total_equity": {"value": <number or string or null>, "confidence_score": <number>}
-      }
-    },
-    "income_statement": {
-      "revenue": {"value": <number or string or null>, "confidence_score": <number>},
-      "cost_of_goods_sold": {"value": <number or string or null>, "confidence_score": <number>},
-      "operating_expenses": {"value": <number or string or null>, "confidence_score": <number>},
-      "net_income": {"value": <number or string or null>, "confidence_score": <number>}
-    },
-    "cash_flow_statement": {
-      "net_cash_from_operations": {"value": <number or string or null>, "confidence_score": <number>},
-      "net_cash_from_investing": {"value": <number or string or null>, "confidence_score": <number>},
-      "net_cash_from_financing": {"value": <number or string or null>, "confidence_score": <number>}
-    }
-  }
-}
-
-The payload must always be an object.
-Only fill fields supported by evidence.
 """
     user = {
         "schema_id": schema_id,
@@ -995,111 +940,6 @@ def _normalize_tax_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _add_parent_confidence(normalized)
 
 
-def _normalize_financial_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    payload = payload if isinstance(payload, dict) else {}
-
-    def leaf_from(container: Dict[str, Any], key: str) -> Dict[str, Any]:
-        return _normalize_leaf_node(container.get(key, {"value": None, "confidence_score": 0.0}))
-
-    statements_raw = payload.get("statements_included", [])
-    statements_included: List[Dict[str, Any]] = []
-    if isinstance(statements_raw, list):
-        for item in statements_raw:
-            statements_included.append(_normalize_leaf_node(item))
-    else:
-        statements_included = []
-
-    bs_raw = payload.get("balance_sheet", {})
-    bs_raw = bs_raw if isinstance(bs_raw, dict) else {}
-    bs_current_assets = bs_raw.get("current_assets", {})
-    bs_current_assets = bs_current_assets if isinstance(bs_current_assets, dict) else {}
-    bs_non_current_assets = bs_raw.get("non_current_assets", {})
-    bs_non_current_assets = bs_non_current_assets if isinstance(bs_non_current_assets, dict) else {}
-    bs_current_liabilities = bs_raw.get("current_liabilities", {})
-    bs_current_liabilities = bs_current_liabilities if isinstance(bs_current_liabilities, dict) else {}
-    bs_equity = bs_raw.get("equity", {})
-    bs_equity = bs_equity if isinstance(bs_equity, dict) else {}
-    bs_totals = bs_raw.get("totals", {})
-    bs_totals = bs_totals if isinstance(bs_totals, dict) else {}
-
-    is_raw = payload.get("income_statement", {})
-    is_raw = is_raw if isinstance(is_raw, dict) else {}
-
-    cf_raw = payload.get("cash_flow_statement", {})
-    cf_raw = cf_raw if isinstance(cf_raw, dict) else {}
-
-    normalized = {
-        "statements_included": statements_included,
-        "balance_sheet": {
-            "current_assets": {
-                "cash_and_cash_equivalents": _normalize_leaf_node(
-                    bs_current_assets.get("cash_and_cash_equivalents", {"value": None, "confidence_score": 0.0})
-                ),
-                "accounts_receivable": _normalize_leaf_node(
-                    bs_current_assets.get("accounts_receivable", {"value": None, "confidence_score": 0.0})
-                ),
-                "inventory": _normalize_leaf_node(
-                    bs_current_assets.get("inventory", {"value": None, "confidence_score": 0.0})
-                ),
-            },
-            "non_current_assets": {
-                "property_plant_equipment": _normalize_leaf_node(
-                    bs_non_current_assets.get("property_plant_equipment", {"value": None, "confidence_score": 0.0})
-                ),
-            },
-            "current_liabilities": {
-                "accounts_payable": _normalize_leaf_node(
-                    bs_current_liabilities.get("accounts_payable", {"value": None, "confidence_score": 0.0})
-                ),
-            },
-            "equity": {
-                "owner_equity": _normalize_leaf_node(
-                    bs_equity.get("owner_equity", {"value": None, "confidence_score": 0.0})
-                ),
-                "retained_earnings": _normalize_leaf_node(
-                    bs_equity.get("retained_earnings", {"value": None, "confidence_score": 0.0})
-                ),
-            },
-            "totals": {
-                "total_assets": _normalize_leaf_node(
-                    bs_totals.get("total_assets", {"value": None, "confidence_score": 0.0})
-                ),
-                "total_liabilities": _normalize_leaf_node(
-                    bs_totals.get("total_liabilities", {"value": None, "confidence_score": 0.0})
-                ),
-                "total_equity": _normalize_leaf_node(
-                    bs_totals.get("total_equity", {"value": None, "confidence_score": 0.0})
-                ),
-            },
-        },
-        "income_statement": {
-            "revenue": _normalize_leaf_node(is_raw.get("revenue", {"value": None, "confidence_score": 0.0})),
-            "cost_of_goods_sold": _normalize_leaf_node(
-                is_raw.get("cost_of_goods_sold", {"value": None, "confidence_score": 0.0})
-            ),
-            "operating_expenses": _normalize_leaf_node(
-                is_raw.get("operating_expenses", {"value": None, "confidence_score": 0.0})
-            ),
-            "net_income": _normalize_leaf_node(
-                is_raw.get("net_income", {"value": None, "confidence_score": 0.0})
-            ),
-        },
-        "cash_flow_statement": {
-            "net_cash_from_operations": _normalize_leaf_node(
-                cf_raw.get("net_cash_from_operations", {"value": None, "confidence_score": 0.0})
-            ),
-            "net_cash_from_investing": _normalize_leaf_node(
-                cf_raw.get("net_cash_from_investing", {"value": None, "confidence_score": 0.0})
-            ),
-            "net_cash_from_financing": _normalize_leaf_node(
-                cf_raw.get("net_cash_from_financing", {"value": None, "confidence_score": 0.0})
-            ),
-        },
-    }
-
-    return _add_parent_confidence(normalized)
-
-
 def build_tax_payload(
     raw_result: Dict[str, Any],
     *,
@@ -1109,25 +949,336 @@ def build_tax_payload(
         raw_result,
         max_chars=_safe_int(os.getenv("LLM_MAX_EVIDENCE_CHARS", "35000"), 35000),
     )
-    messages = _make_tax_prompt(evidence, schema_id=schema_id)
-    parsed = _llm_json(messages, max_tokens=3200)
+    parsed = _llm_json(_make_tax_prompt(evidence, schema_id=schema_id), max_tokens=3200)
     payload = parsed.get("payload", {})
     return _normalize_tax_payload(payload if isinstance(payload, dict) else {})
 
 
-def build_financial_payload(
-    raw_result: Dict[str, Any],
-    *,
-    schema_id: str,
-) -> Dict[str, Any]:
-    evidence = build_evidence_pack(
-        raw_result,
-        max_chars=_safe_int(os.getenv("LLM_MAX_EVIDENCE_CHARS", "35000"), 35000),
-    )
-    messages = _make_financial_prompt(evidence, schema_id=schema_id)
-    parsed = _llm_json(messages, max_tokens=3500)
-    payload = parsed.get("payload", {})
-    return _normalize_financial_payload(payload if isinstance(payload, dict) else {})
+def _group_cells_by_table(cells: List[Dict[str, Any]]) -> Dict[Tuple[int, int], List[Dict[str, Any]]]:
+    grouped: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
+    for cell in cells:
+        key = (_safe_int(cell.get("page"), 0), _safe_int(cell.get("table_index"), 0))
+        grouped.setdefault(key, []).append(cell)
+    return grouped
+
+
+def _table_to_grid(cells: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    if not cells:
+        return []
+
+    max_row = max((_safe_int(c.get("row_index"), 0) for c in cells), default=-1)
+    max_col = max((_safe_int(c.get("column_index"), 0) for c in cells), default=-1)
+
+    lookup: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    for cell in cells:
+        key = (_safe_int(cell.get("row_index"), 0), _safe_int(cell.get("column_index"), 0))
+        lookup[key] = cell
+
+    grid: List[List[Dict[str, Any]]] = []
+    for r in range(max_row + 1):
+        row_items: List[Dict[str, Any]] = []
+        for c in range(max_col + 1):
+            cell = lookup.get((r, c))
+            if cell is None:
+                row_items.append(
+                    {
+                        "text": "",
+                        "confidence": 0.0,
+                        "row_index": r,
+                        "column_index": c,
+                    }
+                )
+            else:
+                row_items.append(
+                    {
+                        "text": _normalize_space(cell.get("text", "")),
+                        "confidence": round(_safe_float(cell.get("confidence")) or 0.0, 3),
+                        "row_index": r,
+                        "column_index": c,
+                    }
+                )
+        grid.append(row_items)
+    return grid
+
+
+def _candidate_statement_text(page: int, table_index: int, lines: List[Dict[str, Any]]) -> str:
+    page_lines = [x for x in lines if _safe_int(x.get("page"), 0) == page]
+    page_lines.sort(key=lambda x: x.get("line_index", 999999))
+    snippets: List[str] = []
+    for line in page_lines[:40]:
+        text = _normalize_space(line.get("text", ""))
+        if text:
+            snippets.append(text.lower())
+    return "\n".join(snippets)
+
+
+def _statement_type_from_text(text: str) -> str:
+    t = text.lower()
+    if "cash flow" in t:
+        return "cash_flow_statement"
+    if "income statement" in t or "profit and loss" in t or "statement of operations" in t:
+        return "income_statement"
+    if "owner equity" in t or "owners equity" in t or "statement of equity" in t:
+        return "statement_of_owner_equity"
+    if "balance sheet" in t or "statement of financial position" in t:
+        return "balance_sheet"
+    if "ratio analysis" in t:
+        return "ratio_analysis"
+    return "unknown_statement"
+
+
+def _guess_statement_title(page: int, table_index: int, grid: List[List[Dict[str, Any]]], lines: List[Dict[str, Any]]) -> str:
+    context = _candidate_statement_text(page, table_index, lines)
+    statement_type = _statement_type_from_text(context)
+    if statement_type != "unknown_statement":
+        return statement_type.replace("_", " ")
+
+    for row in grid[:3]:
+        joined = " ".join(_normalize_space(c.get("text", "")) for c in row if _normalize_space(c.get("text", "")))
+        guess = _statement_type_from_text(joined)
+        if guess != "unknown_statement":
+            return guess.replace("_", " ")
+
+    return "table"
+
+
+def _header_candidates(grid: List[List[Dict[str, Any]]]) -> Dict[int, str]:
+    headers: Dict[int, str] = {}
+    if not grid:
+        return headers
+
+    for col_idx in range(len(grid[0])):
+        values: List[str] = []
+        for r in range(min(3, len(grid))):
+            text = _normalize_space(grid[r][col_idx].get("text", ""))
+            if text:
+                values.append(text)
+        candidate = " ".join(values).strip()
+        if candidate:
+            headers[col_idx] = candidate
+    return headers
+
+
+def _extract_financial_line_items_from_grid(
+    grid: List[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    if not grid:
+        return []
+
+    headers = _header_candidates(grid)
+    items: List[Dict[str, Any]] = []
+
+    for row in grid:
+        non_empty = [cell for cell in row if _normalize_space(cell.get("text", ""))]
+        if len(non_empty) < 2:
+            continue
+
+        label_cell = None
+        for cell in row:
+            text = _normalize_space(cell.get("text", ""))
+            if text and not _is_numeric_text(text):
+                label_cell = cell
+                break
+
+        if label_cell is None:
+            continue
+
+        label_text = _normalize_space(label_cell.get("text", ""))
+        if not label_text:
+            continue
+
+        values: List[Dict[str, Any]] = []
+        row_confidences: List[float] = [round(_safe_float(label_cell.get("confidence")) or 0.0, 3)]
+
+        for cell in row:
+            text = _normalize_space(cell.get("text", ""))
+            if not text:
+                continue
+            if cell["column_index"] == label_cell["column_index"]:
+                continue
+            if _is_numeric_text(text):
+                conf = round(_safe_float(cell.get("confidence")) or 0.0, 3)
+                row_confidences.append(conf)
+                values.append(
+                    {
+                        "column_name": _make_leaf(headers.get(cell["column_index"], f"column_{cell['column_index']}"), 1.0),
+                        "amount": _make_leaf(_parse_numeric_text(text) if _parse_numeric_text(text) is not None else text, conf),
+                    }
+                )
+
+        if not values:
+            continue
+
+        item = {
+            "label": _make_leaf(label_text, round(_safe_float(label_cell.get("confidence")) or 0.0, 3)),
+            "values": values,
+            "confidence_score": round(_mean(row_confidences) or 0.0, 3),
+        }
+        items.append(item)
+
+    return items
+
+
+def _find_best_amount(statement_items: List[Dict[str, Any]], patterns: List[str]) -> Dict[str, Any]:
+    best_value: Any = None
+    best_conf = 0.0
+
+    for statement in statement_items:
+        for item in statement.get("line_items", []):
+            label = _lower(item.get("label", {}).get("value"))
+            if any(p in label for p in patterns):
+                for amount_entry in item.get("values", []):
+                    amount_leaf = amount_entry.get("amount", {})
+                    conf = round(_safe_float(amount_leaf.get("confidence_score")) or 0.0, 3)
+                    if conf >= best_conf:
+                        best_conf = conf
+                        best_value = amount_leaf.get("value")
+
+    return _make_leaf(best_value, best_conf)
+
+
+def build_financial_payload(raw_result: Dict[str, Any], *, schema_id: str) -> Dict[str, Any]:
+    """
+    Stronger financial builder.
+
+    It preserves what the document actually contains:
+    statements included
+    raw statements with line items
+    normalized summary when a mapping is possible
+    """
+    lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
+    cells = ContentUnderstandingClient.extract_table_cells_with_confidence(raw_result, aggregate_mode="mean")
+    grouped = _group_cells_by_table(cells)
+
+    statements: List[Dict[str, Any]] = []
+    statement_type_leaves: List[Dict[str, Any]] = []
+
+    for (page, table_index), table_cells in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1])):
+        grid = _table_to_grid(table_cells)
+        if not grid:
+            continue
+
+        title = _guess_statement_title(page, table_index, grid, lines)
+        statement_type = _statement_type_from_text(title)
+        line_items = _extract_financial_line_items_from_grid(grid)
+
+        if not line_items and statement_type == "unknown_statement":
+            continue
+
+        statement_conf_values: List[float] = []
+        for item in line_items:
+            statement_conf_values.append(round(_safe_float(item.get("confidence_score")) or 0.0, 3))
+
+        statement_conf = round(_mean(statement_conf_values) or 0.0, 3)
+
+        statements.append(
+            {
+                "statement_type": _make_leaf(statement_type if statement_type != "unknown_statement" else title, 0.95 if statement_type != "unknown_statement" else 0.6),
+                "statement_title": _make_leaf(title, 0.9),
+                "page": _make_leaf(page, 1.0),
+                "table_index": _make_leaf(table_index, 1.0),
+                "line_items": line_items,
+                "confidence_score": statement_conf,
+            }
+        )
+
+        st_leaf = _make_leaf(title, 0.95 if statement_type != "unknown_statement" else 0.6)
+        statement_type_leaves.append(st_leaf)
+
+    normalized_summary = {
+        "balance_sheet": {
+            "current_assets": {
+                "cash_and_cash_equivalents": _find_best_amount(
+                    statements,
+                    ["cash and cash equivalents", "cash checking savings", "cash", "checking savings"],
+                ),
+                "accounts_receivable": _find_best_amount(
+                    statements,
+                    ["accounts receivable", "trade accounts receivable", "receivables", "a/r"],
+                ),
+                "inventory": _find_best_amount(
+                    statements,
+                    ["inventory", "raw materials", "work in progress", "finished goods"],
+                ),
+            },
+            "non_current_assets": {
+                "property_plant_equipment": _find_best_amount(
+                    statements,
+                    ["property plant equipment", "machinery", "equipment", "buildings", "land"],
+                ),
+            },
+            "current_liabilities": {
+                "accounts_payable": _find_best_amount(
+                    statements,
+                    ["accounts payable", "trade accounts payable", "payables"],
+                ),
+            },
+            "equity": {
+                "owner_equity": _find_best_amount(
+                    statements,
+                    ["owner equity", "owners equity", "capital", "member equity"],
+                ),
+                "retained_earnings": _find_best_amount(
+                    statements,
+                    ["retained earnings"],
+                ),
+            },
+            "totals": {
+                "total_assets": _find_best_amount(
+                    statements,
+                    ["total assets"],
+                ),
+                "total_liabilities": _find_best_amount(
+                    statements,
+                    ["total liabilities"],
+                ),
+                "total_equity": _find_best_amount(
+                    statements,
+                    ["total equity", "owner equity", "owners equity"],
+                ),
+            },
+        },
+        "income_statement": {
+            "revenue": _find_best_amount(
+                statements,
+                ["revenue", "sales", "gross receipts", "income"],
+            ),
+            "cost_of_goods_sold": _find_best_amount(
+                statements,
+                ["cost of goods sold", "cogs"],
+            ),
+            "operating_expenses": _find_best_amount(
+                statements,
+                ["operating expenses", "expenses"],
+            ),
+            "net_income": _find_best_amount(
+                statements,
+                ["net income", "net profit", "profit"],
+            ),
+        },
+        "cash_flow_statement": {
+            "net_cash_from_operations": _find_best_amount(
+                statements,
+                ["net cash from operations", "cash provided by operating activities"],
+            ),
+            "net_cash_from_investing": _find_best_amount(
+                statements,
+                ["net cash from investing", "cash provided by investing activities"],
+            ),
+            "net_cash_from_financing": _find_best_amount(
+                statements,
+                ["net cash from financing", "cash provided by financing activities"],
+            ),
+        },
+    }
+
+    payload = {
+        "statements_included": statement_type_leaves,
+        "statements": statements,
+        "normalized_summary": normalized_summary,
+    }
+
+    return _add_parent_confidence(payload)
 
 
 def build_generic_payload(raw_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -1137,12 +1288,12 @@ def build_generic_payload(raw_result: Dict[str, Any]) -> Dict[str, Any]:
     table_cells = ContentUnderstandingClient.extract_table_cells_with_confidence(raw_result, aggregate_mode="mean")
 
     titles: List[Dict[str, Any]] = []
-    first_page_lines = [x for x in lines if x.get("page") == 1 and (x.get("text") or "").strip()]
+    first_page_lines = [x for x in lines if x.get("page") == 1 and _normalize_space(x.get("text", ""))]
     first_page_lines.sort(key=lambda x: x.get("line_index", 999999))
     for idx, line in enumerate(first_page_lines[:5]):
         titles.append(
             {
-                "value": line.get("text"),
+                "value": _normalize_space(line.get("text", "")),
                 "confidence_score": round(_safe_float(line.get("confidence")) or 0.0, 3),
                 "page": line.get("page"),
                 "title_index": idx,
@@ -1152,7 +1303,7 @@ def build_generic_payload(raw_result: Dict[str, Any]) -> Dict[str, Any]:
     paragraph_items: List[Dict[str, Any]] = []
     source_paragraphs = paragraphs if paragraphs else lines
     for idx, row in enumerate(source_paragraphs):
-        text = (row.get("text") or "").strip()
+        text = _normalize_space(row.get("text", ""))
         if not text:
             continue
         paragraph_items.append(
@@ -1171,34 +1322,23 @@ def build_generic_payload(raw_result: Dict[str, Any]) -> Dict[str, Any]:
 
     tables: List[Dict[str, Any]] = []
     for (page, table_index), cells in sorted(tables_map.items(), key=lambda x: (x[0][0], x[0][1])):
-        max_row = max((_safe_int(c.get("row_index"), 0) for c in cells), default=-1)
-        max_col = max((_safe_int(c.get("column_index"), 0) for c in cells), default=-1)
-
-        rows: List[List[Dict[str, Any]]] = []
+        grid = _table_to_grid(cells)
         confs: List[float] = []
 
-        for r in range(max_row + 1):
+        rows: List[List[Dict[str, Any]]] = []
+        for row in grid:
             row_items: List[Dict[str, Any]] = []
-            for c in range(max_col + 1):
-                matched = next(
-                    (
-                        x for x in cells
-                        if _safe_int(x.get("row_index"), -1) == r and _safe_int(x.get("column_index"), -1) == c
-                    ),
-                    None,
+            for cell in row:
+                conf = round(_safe_float(cell.get("confidence")) or 0.0, 3)
+                value = cell.get("text") or None
+                if value:
+                    confs.append(conf)
+                row_items.append(
+                    {
+                        "value": value,
+                        "confidence_score": conf,
+                    }
                 )
-                if matched is None:
-                    row_items.append({"value": None, "confidence_score": 0.0})
-                else:
-                    conf = round(_safe_float(matched.get("confidence")) or 0.0, 3)
-                    row_items.append(
-                        {
-                            "value": matched.get("text"),
-                            "confidence_score": conf,
-                        }
-                    )
-                    if (matched.get("text") or "").strip():
-                        confs.append(conf)
             rows.append(row_items)
 
         tables.append(
@@ -1214,10 +1354,7 @@ def build_generic_payload(raw_result: Dict[str, Any]) -> Dict[str, Any]:
         "titles": titles,
         "paragraphs": paragraph_items,
         "tables": tables,
-        "page_count": {
-            "value": len(pages),
-            "confidence_score": 1.0,
-        },
+        "page_count": _make_leaf(len(pages), 1.0),
     }
 
     return _add_parent_confidence(payload)
@@ -1232,14 +1369,6 @@ def build_dynamic_document_envelope(
     ir_blob: str,
     cu_analyzer_id: str = "prebuilt-layout",
 ) -> Dict[str, Any]:
-    """
-    Main entry point for your app.
-
-    It:
-    1 detects the schema dynamically
-    2 builds the right payload
-    3 returns a fixed common envelope
-    """
     pages = list(ContentUnderstandingClient.iter_pages(raw_result))
     route = detect_document_schema(raw_result)
 
