@@ -1,8 +1,10 @@
 # streamlit_app.py
 import json
 import os
+import re
 import uuid
 from datetime import datetime
+from math import exp
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -14,6 +16,8 @@ from azure.storage.blob import BlobServiceClient
 from azure.ai.contentunderstanding import ContentUnderstandingClient
 from openai import AzureOpenAI
 
+from cu_confidence import content_understanding_confidence
+
 load_dotenv()
 
 
@@ -22,24 +26,18 @@ def env_get(name: str, default: str = "") -> str:
     return v.strip() if isinstance(v, str) else v
 
 
-# ============================================================
 # Azure OpenAI
-# ============================================================
 AZURE_OPENAI_ENDPOINT = env_get("AZURE_OPENAI_ENDPOINT").rstrip("/")
 AZURE_OPENAI_KEY = env_get("AZURE_OPENAI_KEY")
 AZURE_OPENAI_DEPLOYMENT = env_get("AZURE_OPENAI_DEPLOYMENT")
 AZURE_OPENAI_API_VERSION = env_get("AZURE_OPENAI_API_VERSION", "2025-04-14")
 
-# ============================================================
 # Content Understanding
-# ============================================================
 AZURE_CONTENT_UNDERSTANDING_ENDPOINT = env_get("AZURE_CONTENT_UNDERSTANDING_ENDPOINT").rstrip("/")
 AZURE_CONTENT_UNDERSTANDING_KEY = env_get("AZURE_CONTENT_UNDERSTANDING_KEY")
 CONTENT_UNDERSTANDING_ANALYZER_ID = env_get("CONTENT_UNDERSTANDING_ANALYZER_ID", "prebuilt-layout")
 
-# ============================================================
 # Azure Blob
-# ============================================================
 AZURE_STORAGE_CONNECTION_STRING = env_get("AZURE_STORAGE_CONNECTION_STRING")
 BLOB_INPUT_CONTAINER = env_get("BLOB_INPUT_CONTAINER", "input-documents")
 BLOB_OUTPUT_CONTAINER = env_get("BLOB_OUTPUT_CONTAINER", "output-json")
@@ -140,12 +138,27 @@ def content_understanding_ir(pdf_bytes: bytes) -> dict:
             }
         )
 
+    # Optional OCR word confidences, used for scan and handwriting clarity scoring
+    word_items = []
+    for w in getattr(content, "words", []) or []:
+        brs = []
+        for br in getattr(w, "bounding_regions", []) or []:
+            brs.append({"page": getattr(br, "page_number", None), "polygon": getattr(br, "polygon", None)})
+        word_items.append(
+            {
+                "text": (getattr(w, "content", "") or "").strip(),
+                "confidence": getattr(w, "confidence", None),
+                "bounding_regions": brs,
+            }
+        )
+
     return {
         "analyzer_id": CONTENT_UNDERSTANDING_ANALYZER_ID,
         "content_format": "markdown",
         "markdown": markdown,
         "pages": pages,
         "tables": tables,
+        "words": word_items,
     }
 
 
@@ -172,7 +185,6 @@ def split_into_chunks(markdown: str, max_chars: int) -> list[str]:
     if not markdown:
         return []
 
-    # Try page break marker split first (common in CU markdown)
     marker = "<!-- PageBreak -->"
     if marker in markdown:
         parts = markdown.split(marker)
@@ -191,25 +203,55 @@ def split_into_chunks(markdown: str, max_chars: int) -> list[str]:
             chunks.append(current)
         return chunks
 
-    # Fallback: fixed-size chunks
-    return [markdown[i : i + max_chars] for i in range(0, len(markdown), max_chars) if markdown[i : i + max_chars].strip()]
+    return [
+        markdown[i : i + max_chars]
+        for i in range(0, len(markdown), max_chars)
+        if markdown[i : i + max_chars].strip()
+    ]
+
+
+# Schema registry starter
+SCHEMA_REGISTRY = {
+    "tax_1040": {"type": "object", "additionalProperties": True},
+    "tax_1120s": {"type": "object", "additionalProperties": True},
+    "tax_1065": {"type": "object", "additionalProperties": True},
+    "financial_statement": {"type": "object", "additionalProperties": True},
+    "annual_report": {"type": "object", "additionalProperties": True},
+}
+
+# Envelope does not include document level confidence
+ENVELOPE_SCHEMA = {
+    "type": "object",
+    "required": ["metadata", "schema", "payload", "evidence", "validations"],
+    "properties": {
+        "metadata": {"type": "object"},
+        "schema": {
+            "type": "object",
+            "required": ["schema_id", "schema_version"],
+            "properties": {"schema_id": {"type": "string"}, "schema_version": {"type": "string"}},
+        },
+        "payload": {"type": "object"},
+        "evidence": {"type": "object"},
+        "validations": {"type": "object"},
+    },
+    "additionalProperties": True,
+}
+
+
+def normalize_llm_output(envelope: dict) -> dict:
+    if not isinstance(envelope, dict):
+        return envelope
+
+    for k in ["confidence", "confidence_score", "confidence_level"]:
+        if k in envelope:
+            del envelope[k]
+    return envelope
 
 
 def merge_envelopes(envelopes: list[dict]) -> dict:
     base = envelopes[0]
 
     for env in envelopes[1:]:
-        # Prefer schema with higher selection confidence if present
-        try:
-            b_conf = float((base.get("confidence") or {}).get("schema_id_selection", 0))
-            e_conf = float((env.get("confidence") or {}).get("schema_id_selection", 0))
-            if e_conf > b_conf and env.get("schema"):
-                base["schema"] = env["schema"]
-                (base.setdefault("confidence", {}))["schema_id_selection"] = e_conf
-        except Exception:
-            pass
-
-        # Payload merge
         bp = base.get("payload") or {}
         ep = env.get("payload") or {}
         if isinstance(bp, dict) and isinstance(ep, dict):
@@ -221,7 +263,6 @@ def merge_envelopes(envelopes: list[dict]) -> dict:
                         bp[k].extend(v)
         base["payload"] = bp
 
-        # Evidence merge
         be = base.get("evidence") or {}
         ee = env.get("evidence") or {}
         if isinstance(be, dict) and isinstance(ee, dict):
@@ -233,51 +274,238 @@ def merge_envelopes(envelopes: list[dict]) -> dict:
                         be[k].extend(v)
         base["evidence"] = be
 
-        # Confidence merge (keep max per key if numeric)
-        bc = base.get("confidence") or {}
-        ec = env.get("confidence") or {}
-        if isinstance(bc, dict) and isinstance(ec, dict):
-            for k, v in ec.items():
-                try:
-                    v_num = float(v)
-                    b_num = float(bc.get(k, 0))
-                    bc[k] = max(b_num, v_num)
-                except Exception:
-                    if k not in bc:
-                        bc[k] = v
-        base["confidence"] = bc
+        bv = base.get("validations") or {}
+        ev = env.get("validations") or {}
+        if isinstance(bv, dict) and isinstance(ev, dict):
+            for k, v in ev.items():
+                if k not in bv:
+                    bv[k] = v
+        base["validations"] = bv
+
+        if not (base.get("schema") or {}).get("schema_id") and env.get("schema"):
+            base["schema"] = env["schema"]
 
     base.setdefault("metadata", {})
     base["metadata"]["chunking"] = {"chunks": len(envelopes)}
     return base
 
 
-# Minimal starter schemas (expand as needed)
-SCHEMA_REGISTRY = {
-    "tax_1040": {"type": "object", "additionalProperties": True},
-    "tax_1120s": {"type": "object", "additionalProperties": True},
-    "tax_1065": {"type": "object", "additionalProperties": True},
-    "financial_statement": {"type": "object", "additionalProperties": True},
-    "annual_report": {"type": "object", "additionalProperties": True},
-}
+def _evidence_has_key(evidence: object, key: str) -> bool:
+    if not key:
+        return False
+    if isinstance(evidence, dict):
+        if key in evidence and evidence.get(key) not in [None, "", [], {}]:
+            return True
+        return any(_evidence_has_key(v, key) for v in evidence.values())
+    if isinstance(evidence, list):
+        return any(_evidence_has_key(v, key) for v in evidence)
+    return False
 
-ENVELOPE_SCHEMA = {
-    "type": "object",
-    "required": ["metadata", "schema", "payload", "evidence", "confidence", "validations"],
-    "properties": {
-        "metadata": {"type": "object"},
-        "schema": {
-            "type": "object",
-            "required": ["schema_id", "schema_version"],
-            "properties": {"schema_id": {"type": "string"}, "schema_version": {"type": "string"}},
-        },
-        "payload": {"type": "object"},
-        "evidence": {"type": "object"},
-        "confidence": {"type": "object"},
-        "validations": {"type": "object"},
-    },
-    "additionalProperties": True,
-}
+
+def _collect_table_text(ir: dict) -> str:
+    parts = []
+    for t in (ir.get("tables") or []):
+        for c in (t.get("cells") or []):
+            txt = (c.get("text") or "").strip()
+            if txt:
+                parts.append(txt)
+    return " ".join(parts)
+
+
+def _normalize_for_match(s: str) -> str:
+    s = (s or "").lower().strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _value_in_text(value_str: str, text: str) -> bool:
+    if not value_str or not text:
+        return False
+
+    v = _normalize_for_match(value_str)
+    t = _normalize_for_match(text)
+    if not v:
+        return False
+
+    if v in t:
+        return True
+
+    v_digits = re.sub(r"[^\d]", "", v)
+    if len(v_digits) >= 4:
+        t_digits = re.sub(r"[^\d]", "", t)
+        if v_digits and v_digits in t_digits:
+            return True
+
+    return False
+
+
+def _page_clarity_map(ir: dict) -> dict:
+    pages = ir.get("pages") or []
+    md = (ir.get("markdown") or "").strip()
+    words = ir.get("words") or []
+
+    page_numbers = [p.get("page_number") for p in pages if p.get("page_number") is not None]
+    if not page_numbers:
+        return {1: 0.6}
+
+    # OCR based clarity if word confidence exists
+    if words:
+        by_page = {pn: [] for pn in page_numbers}
+        for w in words:
+            conf = w.get("confidence", None)
+            if conf is None:
+                continue
+            try:
+                conf_f = float(conf)
+            except Exception:
+                continue
+            for br in (w.get("bounding_regions") or []):
+                pn = br.get("page", None) or br.get("page_number", None)
+                if pn in by_page:
+                    by_page[pn].append(conf_f)
+
+        clarity = {}
+        for pn in page_numbers:
+            vals = by_page.get(pn) or []
+            if vals:
+                clarity[pn] = round(max(0.0, min(1.0, sum(vals) / len(vals))), 3)
+            else:
+                clarity[pn] = 0.55
+        return clarity
+
+    # Fallback clarity from markdown density and noise
+    marker = "<!-- PageBreak -->"
+    if marker in md:
+        chunks = [c.strip() for c in md.split(marker)]
+        chunks = chunks[: len(page_numbers)]
+    else:
+        if not md:
+            chunks = ["" for _ in page_numbers]
+        else:
+            step = max(1, len(md) // max(1, len(page_numbers)))
+            chunks = [md[i : i + step].strip() for i in range(0, len(md), step)]
+            chunks = chunks[: len(page_numbers)]
+
+    clarity = {}
+    for i, pn in enumerate(page_numbers):
+        txt = chunks[i] if i < len(chunks) else ""
+        chars = len(txt)
+
+        if chars < 100:
+            clarity[pn] = 0.25
+            continue
+
+        nonword = sum(1 for ch in txt if not (ch.isalnum() or ch.isspace()))
+        garbage_ratio = nonword / max(1, len(txt))
+
+        density_score = max(0.0, min(1.0, chars / 1400))
+        noise_score = max(0.0, min(1.0, 1.0 - garbage_ratio * 6.0))
+        clarity[pn] = round(max(0.0, min(1.0, 0.55 * density_score + 0.45 * noise_score)), 3)
+
+    return clarity
+
+
+def _field_page_from_evidence(evidence: object, field_name: str):
+    if not field_name:
+        return None
+    if not isinstance(evidence, dict):
+        return None
+
+    node = evidence.get(field_name, None)
+    if isinstance(node, dict):
+        brs = node.get("bounding_regions") or node.get("boundingRegions") or []
+        if brs and isinstance(brs, list) and isinstance(brs[0], dict):
+            pn = brs[0].get("page", None) or brs[0].get("page_number", None)
+            return pn
+    return None
+
+
+def _leaf_confidence(field_name: str, value: object, base: float, evidence: object, ir: dict) -> float:
+    if value in [None, "", [], {}]:
+        return 0.0
+
+    base = float(base)
+
+    md_text = (ir.get("markdown") or "") if isinstance(ir, dict) else ""
+    table_text = _collect_table_text(ir) if isinstance(ir, dict) else ""
+
+    value_str = str(value).strip()
+    in_md = _value_in_text(value_str, md_text)
+    in_tbl = _value_in_text(value_str, table_text)
+    has_ev = _evidence_has_key(evidence, field_name)
+
+    page_map = _page_clarity_map(ir)
+    pn = _field_page_from_evidence(evidence, field_name)
+
+    if pn is None:
+        page_quality = sum(page_map.values()) / max(1, len(page_map))
+    else:
+        page_quality = page_map.get(pn, 0.55)
+
+    score = 0.15 * base + 0.55 * page_quality
+    if in_md:
+        score += 0.18
+    if in_tbl:
+        score += 0.12
+    if has_ev:
+        score += 0.08
+
+    score = max(0.0, min(1.0, score))
+    return round(score, 3)
+
+
+def attach_field_confidence(payload, evidence, base_confidence, ir, field_name=""):
+    """
+    Leaves become { value, confidence_score }
+    Dict parents get confidence_score as average of child confidence_score
+    Lists become { items: [...], confidence_score }
+    """
+
+    if isinstance(payload, dict):
+        if set(payload.keys()) == {"value", "confidence_score"}:
+            return payload
+
+        new_obj = {}
+        child_scores = []
+
+        for k, v in payload.items():
+            wrapped = attach_field_confidence(
+                v,
+                evidence=evidence,
+                base_confidence=base_confidence,
+                ir=ir,
+                field_name=str(k),
+            )
+            new_obj[k] = wrapped
+            if isinstance(wrapped, dict) and "confidence_score" in wrapped:
+                child_scores.append(wrapped["confidence_score"])
+
+        new_obj["confidence_score"] = round(sum(child_scores) / len(child_scores), 3) if child_scores else 0.0
+        return new_obj
+
+    if isinstance(payload, list):
+        wrapped_items = []
+        child_scores = []
+
+        for v in payload:
+            wrapped = attach_field_confidence(
+                v,
+                evidence=evidence,
+                base_confidence=base_confidence,
+                ir=ir,
+                field_name=field_name,
+            )
+            wrapped_items.append(wrapped)
+            if isinstance(wrapped, dict) and "confidence_score" in wrapped:
+                child_scores.append(wrapped["confidence_score"])
+
+        return {
+            "items": wrapped_items,
+            "confidence_score": round(sum(child_scores) / len(child_scores), 3) if child_scores else 0.0,
+        }
+
+    score = _leaf_confidence(field_name, payload, base_confidence, evidence, ir)
+    return {"value": payload, "confidence_score": score}
 
 
 def llm_dynamic_json(ir: dict, user_hint: str = "", chunk_chars: int = 18000) -> dict:
@@ -294,8 +522,9 @@ def llm_dynamic_json(ir: dict, user_hint: str = "", chunk_chars: int = 18000) ->
     system_msg = (
         "You extract structured data.\n"
         "Return only a single JSON object.\n"
-        "Choose schema_id from the allowed list.\n"
-        "Follow the envelope shape exactly.\n"
+        "You must follow the envelope shape exactly.\n"
+        "Do not add any top level keys other than: metadata, schema, payload, evidence, validations.\n"
+        "Do not output a key named confidence, confidence_score, or confidence_level.\n"
         "Only use information present in the provided chunk.\n"
         "If unsure, use null and explain in validations.\n"
     )
@@ -310,7 +539,6 @@ def llm_dynamic_json(ir: dict, user_hint: str = "", chunk_chars: int = 18000) ->
             '  "schema": { "schema_id": "", "schema_version": "" },\n'
             '  "payload": { },\n'
             '  "evidence": { },\n'
-            '  "confidence": { },\n'
             '  "validations": { }\n'
             "}\n\n"
             f"User hint: {user_hint}\n"
@@ -327,9 +555,14 @@ def llm_dynamic_json(ir: dict, user_hint: str = "", chunk_chars: int = 18000) ->
             messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
             response_format={"type": "json_object"},
         )
-        envelopes.append(json.loads(resp.choices[0].message.content))
 
-    return merge_envelopes(envelopes)
+        chunk_env = json.loads(resp.choices[0].message.content)
+        chunk_env = normalize_llm_output(chunk_env)
+        envelopes.append(chunk_env)
+
+    merged = merge_envelopes(envelopes)
+    merged = normalize_llm_output(merged)
+    return merged
 
 
 def llm_business_validation(ir: dict, extracted: dict, chunk_chars: int = 12000) -> dict:
@@ -402,11 +635,9 @@ def deterministic_validate(extracted: dict) -> dict:
     return {"status": "pass" if not errors else "fail", "errors": errors}
 
 
-# ============================================================
 # Streamlit UI
-# ============================================================
 st.set_page_config(page_title="Baker Hill POC", layout="wide")
-st.title("Baker Hill POC: Blob → Content Understanding → Azure OpenAI → Validation")
+st.title("Baker Hill POC: Blob to Content Understanding to Azure OpenAI to Validation")
 
 with st.sidebar:
     st.header("Settings")
@@ -451,29 +682,47 @@ if run_btn:
     blob_upload_bytes(blob_service, BLOB_INPUT_CONTAINER, pdf_blob, pdf_bytes, "application/pdf")
     prog.progress(15)
 
-    status.write("Step 2: Content Understanding (OCR + layout + tables)")
+    status.write("Step 2: Content Understanding")
     try:
         ir = content_understanding_ir(pdf_bytes)
     except Exception as ex:
         st.error(f"Content Understanding failed: {ex}")
         st.stop()
 
+    # CU based document quality components, used only as base and diagnostics
+    cu_conf = content_understanding_confidence(ir)
+
     blob_upload_json(blob_service, BLOB_LOG_CONTAINER, ir_blob, ir)
     prog.progress(45)
 
-    status.write("Step 3: Azure OpenAI dynamic JSON (chunked)")
+    status.write("Step 3: Azure OpenAI dynamic JSON")
     try:
         extracted = llm_dynamic_json(ir, user_hint=user_hint, chunk_chars=chunk_chars_extract)
     except Exception as ex:
         st.error(f"Dynamic JSON failed: {ex}")
         st.stop()
 
+    extracted = normalize_llm_output(extracted)
+    extracted.setdefault("payload", {})
+    extracted.setdefault("evidence", {})
+    extracted.setdefault("validations", {})
+
+    # Field level and parent level confidence scores
+    extracted["payload"] = attach_field_confidence(
+        extracted.get("payload"),
+        evidence=extracted.get("evidence"),
+        base_confidence=cu_conf["confidence_score"],
+        ir=ir,
+    )
+
+    extracted["validations"]["content_understanding_confidence_components"] = cu_conf["components"]
+
     blob_upload_json(blob_service, BLOB_LOG_CONTAINER, extracted_blob, extracted)
     prog.progress(70)
 
     business_report = {}
     if run_business:
-        status.write("Step 4: LLM business validation (chunked)")
+        status.write("Step 4: LLM business validation")
         try:
             business_report = llm_business_validation(ir, extracted, chunk_chars=chunk_chars_validate)
         except Exception as ex:
@@ -495,7 +744,6 @@ if run_btn:
     status.write("Step 5: Deterministic validation")
     det_report = deterministic_validate(extracted)
 
-    extracted.setdefault("validations", {})
     extracted["validations"]["business_validation"] = business_report
     extracted["validations"]["deterministic_validation"] = det_report
 
@@ -504,6 +752,7 @@ if run_btn:
     extracted["metadata"]["created_utc"] = stamp
     extracted["metadata"]["source_blob"] = pdf_blob
     extracted["metadata"]["ir_blob"] = ir_blob
+    extracted["metadata"]["cu_analyzer_id"] = CONTENT_UNDERSTANDING_ANALYZER_ID
 
     blob_upload_json(blob_service, BLOB_OUTPUT_CONTAINER, final_blob, extracted)
     prog.progress(100)
@@ -515,9 +764,10 @@ if run_btn:
         st.code((ir.get("markdown") or "")[:6000])
         st.write("Pages detected:", len(ir.get("pages") or []))
         st.write("Tables detected:", len(ir.get("tables") or []))
+        st.write("Words captured:", len(ir.get("words") or []))
 
     with c2:
-        st.subheader("Final JSON")
+        st.subheader("Final JSON with field and parent confidence_score")
         st.json(extracted)
 
     st.info(f"Blob outputs: input={pdf_blob} logs={ir_blob}, {extracted_blob} output={final_blob}")
