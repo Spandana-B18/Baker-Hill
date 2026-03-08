@@ -55,6 +55,7 @@ from blob_utils import (
     list_blobs,
     blob_download_bytes,
 )
+from search_index import upload_document_to_search
 
 
 def azure_openai_client() -> AzureOpenAI:
@@ -755,6 +756,8 @@ if run_btn:
     extracted["metadata"]["cu_analyzer_id"] = CONTENT_UNDERSTANDING_ANALYZER_ID
 
     blob_upload_json(blob_service, BLOB_OUTPUT_CONTAINER, final_blob, extracted)
+    # Upload to Azure AI Search
+    upload_document_to_search(extracted)
     prog.progress(100)
     status.write("Done")
 
