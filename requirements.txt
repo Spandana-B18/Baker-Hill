@@ -6,3 +6,4 @@ openai
 jsonschema
 pydantic
 azure-core
+azure-search-documents
