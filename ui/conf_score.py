@@ -557,11 +557,11 @@ def _azure_openai_chat_completion(
     max_tokens: int = 3500,
 ) -> str:
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
-    key = os.getenv("AZURE_OPENAI_KEY", "")
+    api_key = os.getenv("AZURE_OPENAI_API_KEY", "")
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
     api_version = os.getenv("AZURE_OPENAI_API_VERSION", "")
 
-    if not endpoint or not key or not deployment or not api_version:
+    if not endpoint or not api_key or not deployment or not api_version:
         raise LLMError("Missing Azure OpenAI configuration in environment variables")
 
     url = (
@@ -571,7 +571,7 @@ def _azure_openai_chat_completion(
 
     headers = {
         "Content-Type": "application/json",
-        "api-key": key,
+        "api-key": api_key,
     }
 
     payload = {

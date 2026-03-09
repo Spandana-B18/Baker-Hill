@@ -1,14 +1,18 @@
 """
-streamlit_app.py
+app.py
 
 This version:
 1. Uploads the original file to BLOB_INPUT_CONTAINER
 2. Runs Azure Content Understanding
 3. Saves raw extracted JSON to BLOB_OUTPUT_CONTAINER
-4. Saves a small run log to BLOB_LOG_CONTAINER
-5. Shows only a preview on screen
-6. Provides a download option for the full raw extracted JSON
-7. Uses input file name plus timestamp for downloaded JSON file names
+4. Saves normalized JSON to BLOB_OUTPUT_CONTAINER
+5. Generates embeddings for chunk documents
+6. Creates the correct Azure AI Search index only if it does not already exist
+7. Indexes chunk documents into the existing or newly created Azure AI Search index
+8. Saves a small run log to BLOB_LOG_CONTAINER
+9. Shows previews on screen
+10. Provides a download option for the full raw extracted JSON
+11. Uses input file name plus timestamp for downloaded JSON file names
 """
 
 import json
@@ -18,15 +22,27 @@ from uuid import uuid4
 
 import streamlit as st
 from dotenv import load_dotenv
-from azure.storage.blob import BlobServiceClient
+
+load_dotenv()
 
 from conf_score import (
     ContentUnderstandingClient,
     ContentUnderstandingError,
     default_analyzer_id,
 )
+from storage import (
+    upload_bytes_to_blob,
+    upload_json_to_blob,
+    download_blob_bytes,
+)
+from transform import (
+    build_raw_preview,
+    build_normalized_document,
+    build_index_documents,
+    make_output_json_filename,
+)
+from indexer import AzureAISearchIndexer, SearchIndexerError
 
-load_dotenv()
 
 ENDPOINT = os.getenv("AZURE_CONTENT_UNDERSTANDING_ENDPOINT", "")
 API_KEY = os.getenv("AZURE_CONTENT_UNDERSTANDING_KEY", "")
@@ -35,11 +51,17 @@ ANALYZER_ID = os.getenv("AZURE_ANALYZER_ID", default_analyzer_id())
 MAX_FILE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "10"))
 
 AZURE_STORAGE_ACCOUNT_NAME = os.getenv("AZURE_STORAGE_ACCOUNT_NAME", "")
-AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
 
 BLOB_INPUT_CONTAINER = os.getenv("BLOB_INPUT_CONTAINER", "input-documents")
 BLOB_OUTPUT_CONTAINER = os.getenv("BLOB_OUTPUT_CONTAINER", "output-json")
 BLOB_LOG_CONTAINER = os.getenv("BLOB_LOG_CONTAINER", "logfiles")
+
+AZURE_SEARCH_SERVICE_ENDPOINT = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT", "")
+AZURE_SEARCH_TAX_INDEX = os.getenv("AZURE_SEARCH_TAX_INDEX", "tax-documents-index")
+AZURE_SEARCH_FINANCIAL_INDEX = os.getenv("AZURE_SEARCH_FINANCIAL_INDEX", "financial-documents-index")
+AZURE_SEARCH_GENERIC_INDEX = os.getenv("AZURE_SEARCH_GENERIC_INDEX", "generic-documents-index")
+AZURE_SEARCH_VECTOR_FIELD = os.getenv("AZURE_SEARCH_VECTOR_FIELD", "content_vector")
+AZURE_SEARCH_VECTOR_DIMENSIONS = os.getenv("AZURE_SEARCH_VECTOR_DIMENSIONS", "3072")
 
 CONTENT_TYPE_MAP = {
     "pdf": "application/pdf",
@@ -52,100 +74,6 @@ CONTENT_TYPE_MAP = {
 }
 
 
-def get_blob_service_client() -> BlobServiceClient:
-    if not AZURE_STORAGE_CONNECTION_STRING:
-        raise ValueError("Missing AZURE_STORAGE_CONNECTION_STRING")
-    return BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
-
-
-def get_container_client(container_name: str):
-    service_client = get_blob_service_client()
-    container_client = service_client.get_container_client(container_name)
-
-    try:
-        container_client.create_container()
-    except Exception:
-        pass
-
-    return container_client
-
-
-def upload_bytes_to_blob(container_name: str, blob_name: str, data: bytes, content_type: str | None = None) -> str:
-    container_client = get_container_client(container_name)
-    blob_client = container_client.get_blob_client(blob_name)
-
-    if content_type:
-        from azure.storage.blob import ContentSettings
-        blob_client.upload_blob(
-            data,
-            overwrite=True,
-            content_settings=ContentSettings(content_type=content_type),
-        )
-    else:
-        blob_client.upload_blob(data, overwrite=True)
-
-    return blob_name
-
-
-def upload_json_to_blob(container_name: str, blob_name: str, data: dict) -> str:
-    payload = json.dumps(data, indent=2, ensure_ascii=False, default=str).encode("utf8")
-    return upload_bytes_to_blob(
-        container_name=container_name,
-        blob_name=blob_name,
-        data=payload,
-        content_type="application/json",
-    )
-
-
-def download_blob_bytes(container_name: str, blob_name: str) -> bytes:
-    container_client = get_container_client(container_name)
-    blob_client = container_client.get_blob_client(blob_name)
-    return blob_client.download_blob().readall()
-
-
-def make_output_json_filename(input_file_name: str, timestamp_utc: str, suffix: str = "raw_extracted") -> str:
-    base_name = os.path.splitext(input_file_name)[0]
-    safe_base_name = "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in base_name)
-    return f"{safe_base_name}_{timestamp_utc}_{suffix}.json"
-
-
-def build_raw_preview(raw_result: dict) -> dict:
-    pages = list(ContentUnderstandingClient.iter_pages(raw_result))
-    lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
-    paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(raw_result, aggregate_mode="mean")
-    table_cells = ContentUnderstandingClient.extract_table_cells_with_confidence(raw_result, aggregate_mode="mean")
-
-    page_summaries = []
-    for page in pages[:20]:
-        page_number = page.get("pageNumber", page.get("page"))
-        page_summaries.append(
-            {
-                "page_number": page_number,
-                "width": page.get("width"),
-                "height": page.get("height"),
-                "unit": page.get("unit"),
-                "word_count": len(page.get("words", []) or []),
-                "line_count": len(page.get("lines", []) or []),
-                "paragraph_count": len(page.get("paragraphs", []) or []),
-                "table_count": len(page.get("tables", []) or []),
-            }
-        )
-
-    return {
-        "status": raw_result.get("status"),
-        "summary": {
-            "page_count": len(pages),
-            "line_count": len(lines),
-            "paragraph_count": len(paragraphs),
-            "table_cell_count": len(table_cells),
-        },
-        "pages": page_summaries,
-        "sample_lines": lines[:20],
-        "sample_paragraphs": paragraphs[:10],
-        "sample_table_cells": table_cells[:20],
-    }
-
-
 def upload_run_log(log_data: dict, blob_name: str) -> str:
     return upload_json_to_blob(
         container_name=BLOB_LOG_CONTAINER,
@@ -155,15 +83,15 @@ def upload_run_log(log_data: dict, blob_name: str) -> str:
 
 
 st.set_page_config(
-    page_title="Content Understanding Raw Extractor",
+    page_title="Content Understanding + Azure AI Search Indexer",
     page_icon="📄",
     layout="wide",
 )
 
-st.title("📄 Content Understanding Raw Extractor")
+st.title("📄 Content Understanding + Azure AI Search Indexer")
 st.caption(
-    "Upload a document, run Azure Content Understanding, save the source file and raw extracted JSON to Azure Blob Storage, "
-    "and preview the result safely."
+    "Upload a document, run Azure Content Understanding, save source and JSON artifacts to Azure Blob Storage, "
+    "prepare chunk documents, generate embeddings, and index them into Azure AI Search."
 )
 
 with st.sidebar:
@@ -185,10 +113,19 @@ with st.sidebar:
     st.write(f"**Log container:** {BLOB_LOG_CONTAINER}")
 
     st.divider()
-    st.header("Current settings")
+    st.header("Content Understanding")
     st.write(f"**Analyzer ID:** {ANALYZER_ID}")
     st.write(f"**API Version:** {API_VERSION}")
     st.write(f"**Max file size:** {MAX_FILE_MB} MB")
+
+    st.divider()
+    st.header("Azure AI Search")
+    st.write(f"**Search endpoint:** {AZURE_SEARCH_SERVICE_ENDPOINT or 'not set'}")
+    st.write(f"**Tax index:** {AZURE_SEARCH_TAX_INDEX}")
+    st.write(f"**Financial index:** {AZURE_SEARCH_FINANCIAL_INDEX}")
+    st.write(f"**Generic index:** {AZURE_SEARCH_GENERIC_INDEX}")
+    st.write(f"**Vector field:** {AZURE_SEARCH_VECTOR_FIELD}")
+    st.write(f"**Vector dimensions:** {AZURE_SEARCH_VECTOR_DIMENSIONS}")
 
 uploaded_file = st.file_uploader(
     "Upload a document",
@@ -211,7 +148,7 @@ if uploaded_file:
     if col2.button("Run analysis", type="primary", use_container_width=True):
         content_type = CONTENT_TYPE_MAP.get(file_ext, "application/octet-stream")
 
-        with st.spinner("Uploading file and submitting document to Azure Content Understanding..."):
+        with st.spinner("Uploading file, running extraction, generating embeddings, and indexing into Azure AI Search..."):
             try:
                 now = datetime.now(timezone.utc)
                 created_utc = now.strftime("%Y%m%dT%H%M%SZ")
@@ -219,6 +156,7 @@ if uploaded_file:
 
                 source_blob = f"{created_utc}_{doc_id}_{uploaded_file.name}"
                 raw_json_blob = f"{created_utc}_{doc_id}.content_understanding_raw.json"
+                normalized_blob = f"{created_utc}_{doc_id}.normalized_document.json"
                 log_blob = f"{created_utc}_{doc_id}.run_log.json"
 
                 upload_bytes_to_blob(
@@ -249,14 +187,56 @@ if uploaded_file:
 
                 raw_preview = build_raw_preview(raw_result)
 
+                normalized_document = build_normalized_document(
+                    raw_result,
+                    doc_id=doc_id,
+                    created_utc=created_utc,
+                    source_blob=source_blob,
+                    raw_json_blob=raw_json_blob,
+                    cu_analyzer_id=ANALYZER_ID,
+                    source_file_name=uploaded_file.name,
+                )
+
+                upload_json_to_blob(
+                    container_name=BLOB_OUTPUT_CONTAINER,
+                    blob_name=normalized_blob,
+                    data=normalized_document,
+                )
+
+                index_documents = build_index_documents(normalized_document)
+
+                indexer = AzureAISearchIndexer()
+                index_result = indexer.prepare_and_index_documents(
+                    normalized_document=normalized_document,
+                    index_documents=index_documents,
+                    add_vectors=True,
+                )
+
+                create_result = index_result.get("index_create_result", {})
+                create_status = create_result.get("status", "unknown")
+                uploaded_count = index_result.get("result", {}).get("uploaded", 0)
+                failed_count = index_result.get("result", {}).get("failed", 0)
+                index_name = index_result.get("index_name", "")
+
                 log_data = {
                     "doc_id": doc_id,
                     "created_utc": created_utc,
                     "file_name": uploaded_file.name,
                     "input_blob": source_blob,
                     "output_blob": raw_json_blob,
+                    "normalized_blob": normalized_blob,
                     "analyzer_id": ANALYZER_ID,
                     "status": raw_result.get("status"),
+                    "document_type": normalized_document.get("document_type"),
+                    "document_subtype": normalized_document.get("document_subtype"),
+                    "schema_id": normalized_document.get("schema_id"),
+                    "chunk_count": normalized_document.get("chunk_count"),
+                    "index_document_count": len(index_documents),
+                    "index_name": index_name,
+                    "index_create_status": create_status,
+                    "index_uploaded": uploaded_count,
+                    "index_failed": failed_count,
+                    "vectorized": index_result.get("vectorized"),
                     "preview_summary": raw_preview.get("summary", {}),
                 }
                 upload_run_log(log_data, log_blob)
@@ -265,16 +245,39 @@ if uploaded_file:
                 st.session_state["created_utc"] = created_utc
                 st.session_state["source_blob"] = source_blob
                 st.session_state["raw_json_blob"] = raw_json_blob
+                st.session_state["normalized_blob"] = normalized_blob
                 st.session_state["log_blob"] = log_blob
                 st.session_state["file_name"] = uploaded_file.name
                 st.session_state["raw_preview"] = raw_preview
+                st.session_state["normalized_document"] = normalized_document
+                st.session_state["index_documents"] = index_documents
+                st.session_state["index_result"] = index_result
 
-                st.success("Analysis complete. Input file, raw JSON, and log saved to blob storage.")
+                if failed_count == 0:
+                    if create_status == "already_exists":
+                        st.success(
+                            f"Analysis complete. Reused existing index `{index_name}` and indexed "
+                            f"{uploaded_count} chunks. Input file, raw JSON, normalized JSON, and log were saved to blob storage."
+                        )
+                    else:
+                        st.success(
+                            f"Analysis complete. Created index `{index_name}` and indexed "
+                            f"{uploaded_count} chunks. Input file, raw JSON, normalized JSON, and log were saved to blob storage."
+                        )
+                else:
+                    st.warning(
+                        f"Analysis completed with partial indexing. Index `{index_name}` uploaded "
+                        f"{uploaded_count} chunks and failed on {failed_count} chunks."
+                    )
+
             except ContentUnderstandingError as exc:
                 st.error(f"Analysis failed: {exc}")
                 st.stop()
+            except SearchIndexerError as exc:
+                st.error(f"Azure AI Search indexing failed: {exc}")
+                st.stop()
             except Exception as exc:
-                st.error(f"Storage error: {exc}")
+                st.error(f"Pipeline error: {exc}")
                 st.stop()
 
     if col3.button("Clear", use_container_width=True):
@@ -283,12 +286,15 @@ if uploaded_file:
             "created_utc",
             "source_blob",
             "raw_json_blob",
+            "normalized_blob",
             "log_blob",
-            "raw_preview",
             "file_name",
+            "raw_preview",
+            "normalized_document",
+            "index_documents",
+            "index_result",
         ]:
-            if key in st.session_state:
-                del st.session_state[key]
+            st.session_state.pop(key, None)
         st.rerun()
 
 if "raw_json_blob" in st.session_state:
@@ -307,11 +313,15 @@ if "raw_json_blob" in st.session_state:
     meta_col3.metric("Blob Saved", "Yes")
 
     st.caption(f"Input blob: `{st.session_state.get('source_blob', '')}`")
-    st.caption(f"Output blob: `{st.session_state.get('raw_json_blob', '')}`")
+    st.caption(f"Raw JSON blob: `{st.session_state.get('raw_json_blob', '')}`")
+    st.caption(f"Normalized blob: `{st.session_state.get('normalized_blob', '')}`")
     st.caption(f"Log blob: `{st.session_state.get('log_blob', '')}`")
 
     try:
-        raw_bytes = download_blob_bytes(BLOB_OUTPUT_CONTAINER, st.session_state["raw_json_blob"])
+        raw_bytes = download_blob_bytes(
+            BLOB_OUTPUT_CONTAINER,
+            st.session_state["raw_json_blob"],
+        )
 
         download_file_name = make_output_json_filename(
             input_file_name=st.session_state.get("file_name", "document.pdf"),
@@ -328,3 +338,52 @@ if "raw_json_blob" in st.session_state:
         )
     except Exception as exc:
         st.warning(f"Could not download raw JSON from blob: {exc}")
+
+if st.session_state.get("normalized_document"):
+    st.divider()
+    st.subheader("Normalized document")
+
+    normalized_document_str = json.dumps(
+        st.session_state["normalized_document"],
+        indent=2,
+        default=str,
+    )
+
+    with st.container(height=json_box_height):
+        st.code(normalized_document_str, language="json", line_numbers=True)
+
+if st.session_state.get("index_documents"):
+    st.divider()
+    st.subheader("Prepared index documents")
+
+    index_documents = st.session_state["index_documents"]
+    st.caption(f"Prepared {len(index_documents)} chunk documents for Azure AI Search.")
+
+    preview_docs = index_documents[:5]
+    preview_docs_str = json.dumps(preview_docs, indent=2, default=str)
+
+    with st.container(height=min(json_box_height, 500)):
+        st.code(preview_docs_str, language="json", line_numbers=True)
+
+if st.session_state.get("index_result"):
+    st.divider()
+    st.subheader("Azure AI Search indexing result")
+
+    index_result = st.session_state["index_result"]
+    result = index_result.get("result", {})
+    create_result = index_result.get("index_create_result", {})
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Index name", index_result.get("index_name", ""))
+    col2.metric("Chunks prepared", index_result.get("chunk_count", 0))
+    col3.metric("Uploaded", result.get("uploaded", 0))
+    col4.metric("Failed", result.get("failed", 0))
+
+    st.caption(f"Document type: `{index_result.get('document_type', '')}`")
+    st.caption(f"Document ID: `{index_result.get('document_id', '')}`")
+    st.caption(f"Vectors added: `{index_result.get('vectorized', False)}`")
+    st.caption(f"Index create status: `{create_result.get('status', 'unknown')}`")
+
+    index_result_str = json.dumps(index_result, indent=2, default=str)
+    with st.container(height=min(json_box_height, 450)):
+        st.code(index_result_str, language="json", line_numbers=True)
