@@ -1,52 +1,84 @@
 """
-app.py
+ui/app.py
 
 This version:
-1. Uploads the original file to BLOB_INPUT_CONTAINER
+1. Reads documents from Azure Blob input container
 2. Runs Azure Content Understanding
 3. Saves raw extracted JSON to BLOB_OUTPUT_CONTAINER
 4. Saves normalized JSON to BLOB_OUTPUT_CONTAINER
-5. Generates embeddings for chunk documents
-6. Creates the correct Azure AI Search index only if it does not already exist
-7. Indexes chunk documents into the existing or newly created Azure AI Search index
-8. Saves a small run log to BLOB_LOG_CONTAINER
+5. Builds chunk documents
+6. Creates the correct Azure AI Search index if needed
+7. Indexes chunk documents into Azure AI Search
+8. Saves a run log to BLOB_LOG_CONTAINER
 9. Shows previews on screen
-10. Provides a download option for the full raw extracted JSON
-11. Adds an Ask Questions tab for retrieval + grounded answering
-12. Uses input file name plus timestamp for downloaded JSON file names
+10. Provides download options for raw and normalized JSON
+11. Uses retrieval-based Q&A in the second tab
+12. Filters retrieval to the current document_id
 """
 
+import base64
 import json
 import os
+import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from uuid import uuid4
 
 import streamlit as st
 from dotenv import load_dotenv
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 load_dotenv()
 
-from conf_score import (
+from core.conf_score import (
     ContentUnderstandingClient,
     ContentUnderstandingError,
     default_analyzer_id,
 )
-from storage import (
-    upload_bytes_to_blob,
+from ingest.storage import (
     upload_json_to_blob,
     download_blob_bytes,
+    get_container_client,
 )
-from transform import (
+from ingest.transform import (
     build_raw_preview,
     build_normalized_document,
     build_index_documents,
     make_output_json_filename,
+    compute_confidence_summary,
 )
-from indexer import AzureAISearchIndexer, SearchIndexerError
-from retrieval_llm import RetrievalPipeline, RetrievalError
-from doc_qa import DocumentQAError, ask_about_document
+from core.indexer import AzureAISearchIndexer, SearchIndexerError
+from core.retrieval_llm import RetrievalPipeline, RetrievalError
+
+
+def _list_blobs(container_name: str, name_starts_with: str = ""):
+    cc = get_container_client(container_name)
+    kwargs = {} if not name_starts_with else {"name_starts_with": name_starts_with}
+    return [b.name for b in cc.list_blobs(**kwargs)]
+
+
+def _list_folders(container_name: str, prefix: str = "") -> list[str]:
+    blobs = _list_blobs(container_name, prefix)
+    folders: set[str] = set()
+    for name in blobs:
+        rest = name[len(prefix):] if prefix else name
+        if "/" in rest:
+            folders.add(rest.split("/")[0])
+    return sorted(folders)
+
+
+def _list_blobs_in_folder(container_name: str, folder: str, doc_extensions: tuple[str, ...]) -> list[str]:
+    if folder:
+        prefix = folder.rstrip("/") + "/"
+        all_blobs = _list_blobs(container_name, prefix)
+    else:
+        all_blobs = [b for b in _list_blobs(container_name) if "/" not in b]
+    return [b for b in all_blobs if b.lower().endswith(doc_extensions)]
 
 
 ENDPOINT = os.getenv("AZURE_CONTENT_UNDERSTANDING_ENDPOINT", "")
@@ -76,24 +108,22 @@ CONTENT_TYPE_MAP = {
     "tiff": "image/tiff",
     "bmp": "image/bmp",
     "heif": "image/heif",
+    "tif": "image/tiff",
 }
 
 
 @st.cache_resource(show_spinner=False)
 def get_indexer() -> AzureAISearchIndexer:
-    """Cached indexer — HTTP session reused across all Streamlit reruns."""
     return AzureAISearchIndexer()
 
 
 @st.cache_resource(show_spinner=False)
 def get_retrieval_pipeline() -> RetrievalPipeline:
-    """Cached retrieval pipeline — embedder + search session built once."""
     return RetrievalPipeline()
 
 
 @st.cache_resource(show_spinner=False)
 def get_content_understanding_client() -> ContentUnderstandingClient:
-    """Cached CU client — avoids re-building headers/session on every upload."""
     return ContentUnderstandingClient(
         endpoint=ENDPOINT,
         api_key=API_KEY,
@@ -110,269 +140,347 @@ def upload_run_log(log_data: dict, blob_name: str) -> str:
 
 
 st.set_page_config(
-    page_title="Baker Hill",
-    page_icon="📄",
+    page_title="Baker Hill Document INSIGHT",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-st.title("📄 Baker Hill")
-st.caption(
-    "Upload a document, run Azure Content Understanding, save source and JSON artifacts to Azure Blob Storage, "
-    "prepare chunk documents, generate embeddings, index them into Azure AI Search, and ask questions over indexed content."
+st.markdown(
+    """
+<style>
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0;
+        border-bottom: 1px solid #e2e8f0;
+        margin-bottom: 1.5rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 14px 28px;
+        font-weight: 500;
+        font-size: 0.95rem;
+        color: #64748b;
+        border: none;
+        border-bottom: 3px solid transparent;
+        border-radius: 0;
+    }
+    .stTabs [data-baseweb="tab"]:hover { color: #1e293b; }
+    .stTabs [aria-selected="true"] {
+        color: #1e3a5f;
+        background: transparent;
+        border-bottom: 3px solid #1e3a5f;
+    }
+    .stButton > button {
+        background-color: #1e3a5f !important;
+        color: white !important;
+        border: none !important;
+        padding: 10px 24px !important;
+        border-radius: 6px !important;
+        font-weight: 500 !important;
+        transition: background-color 0.2s;
+    }
+    .stButton > button:hover {
+        background-color: #2c5282 !important;
+        color: white !important;
+    }
+    .stTextInput > div > div > input {
+        border-radius: 6px !important;
+        border: 1px solid #e2e8f0 !important;
+    }
+    .stSuccess, .block-container { padding-top: 1rem !important; }
+    h1, h2, h3 { color: #1e293b !important; font-weight: 600 !important; }
+    .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+</style>
+""",
+    unsafe_allow_html=True,
 )
 
-# with st.sidebar:
-#     st.header("Viewer")
-#     json_box_height = st.slider(
-#         "JSON viewer height",
-#         min_value=220,
-#         max_value=1200,
-#         value=420,
-#         step=20,
-#         help="Controls the height of the preview box.",
-#     )
+_logo_paths = [
+    os.path.join(CURRENT_DIR, "css", "logo.png"),
+    os.path.join(CURRENT_DIR, "assets", "logo.png"),
+]
+_logo_b64 = None
+for _p in _logo_paths:
+    try:
+        if os.path.isfile(_p):
+            with open(_p, "rb") as _f:
+                _logo_b64 = base64.b64encode(_f.read()).decode()
+            break
+    except Exception:
+        continue
 
-#     st.divider()
-#     st.header("Storage")
-#     st.write(f"**Storage account:** {AZURE_STORAGE_ACCOUNT_NAME or 'not set'}")
-#     st.write(f"**Input container:** {BLOB_INPUT_CONTAINER}")
-#     st.write(f"**Output container:** {BLOB_OUTPUT_CONTAINER}")
-#     st.write(f"**Log container:** {BLOB_LOG_CONTAINER}")
-
-#     st.divider()
-#     st.header("Content Understanding")
-#     st.write(f"**Analyzer ID:** {ANALYZER_ID}")
-#     st.write(f"**API Version:** {API_VERSION}")
-#     st.write(f"**Max file size:** {MAX_FILE_MB} MB")
-
-#     st.divider()
-#     st.header("Azure AI Search")
-#     st.write(f"**Search endpoint:** {AZURE_SEARCH_SERVICE_ENDPOINT or 'not set'}")
-#     st.write(f"**Tax index:** {AZURE_SEARCH_TAX_INDEX}")
-#     st.write(f"**Financial index:** {AZURE_SEARCH_FINANCIAL_INDEX}")
-#     st.write(f"**Generic index:** {AZURE_SEARCH_GENERIC_INDEX}")
-#     st.write(f"**Vector field:** {AZURE_SEARCH_VECTOR_FIELD}")
-#     st.write(f"**Vector dimensions:** {AZURE_SEARCH_VECTOR_DIMENSIONS}")
+if _logo_b64:
+    st.markdown(
+        f'<div style="display: flex; align-items: center; gap: 1.5rem; margin-bottom: 2rem; padding: 0.75rem 0;">'
+        f'<img src="data:image/png;base64,{_logo_b64}" style="height: 76px; width: auto; max-width: 200px; object-fit: contain; flex-shrink: 0;" alt="Baker Hill" />'
+        f'<div style="border-left: 2px solid #e2e8f0; height: 44px;"></div>'
+        f'<h1 style="margin: 0; color: #1e293b; font-weight: 600; font-size: 2rem; letter-spacing: -0.02em;">Baker Hill Document Insight</h1>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+else:
+    st.title("Baker Hill Document Insight")
 
 tab_upload, tab_ask = st.tabs(["Upload and Index", "Ask Questions"])
 
 with tab_upload:
-    uploaded_file = st.file_uploader(
-        "Upload a document",
-        type=["pdf", "png", "jpg", "jpeg", "tiff", "bmp", "heif"],
-        help=f"Maximum file size: {MAX_FILE_MB} MB",
-    )
+    with st.expander("Select from Blob Storage", expanded=True):
+        st.caption(f"Pick a folder, then a document from container: `{BLOB_INPUT_CONTAINER}`")
+        doc_extensions = (".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".heif", ".tif")
+        selected_blob = None
 
-    if uploaded_file:
-        file_ext = uploaded_file.name.rsplit(".", 1)[-1].lower()
-        file_bytes = uploaded_file.read()
-        file_mb = len(file_bytes) / (1024 * 1024)
+        try:
+            folders = _list_folders(BLOB_INPUT_CONTAINER)
+            folder_options = [""] + folders
+            selected_folder = st.selectbox(
+                "Select folder",
+                options=folder_options,
+                format_func=lambda x: "Choose folder" if x == "" else x,
+                key="blob_folder_select",
+            )
 
-        col1, col2, col3 = st.columns([3, 1, 1])
-        col1.info(f"{uploaded_file.name}  size {file_mb:.2f} MB")
-
-        if file_mb > MAX_FILE_MB:
-            st.error(f"File exceeds the {MAX_FILE_MB} MB limit.")
-            st.stop()
-
-        if col2.button("Run analysis", type="primary", use_container_width=True):
-            content_type = CONTENT_TYPE_MAP.get(file_ext, "application/octet-stream")
-
-            with st.status("Running analysis pipeline...", expanded=True) as pipeline_status:
-                try:
-                    progress = st.progress(0, text="Starting pipeline…")
-                    pipeline_start = time.monotonic()
-
-                    now = datetime.now(timezone.utc)
-                    created_utc = now.strftime("%Y%m%dT%H%M%SZ")
-                    doc_id = uuid4().hex
-
-                    source_blob = f"{created_utc}_{doc_id}_{uploaded_file.name}"
-                    raw_json_blob = f"{created_utc}_{doc_id}.content_understanding_raw.json"
-                    normalized_blob = f"{created_utc}_{doc_id}.normalized_document.json"
-                    log_blob = f"{created_utc}_{doc_id}.run_log.json"
-
-                    # Step 1 — upload source file (overlapped with step 2 kick-off)
-                    progress.progress(5, text="Step 1/6 — Uploading source file to Blob Storage…")
-                    t0 = time.monotonic()
-                    upload_bytes_to_blob(
-                        container_name=BLOB_INPUT_CONTAINER,
-                        blob_name=source_blob,
-                        data=file_bytes,
-                        content_type=content_type,
+            if selected_folder is not None:
+                doc_blobs = _list_blobs_in_folder(BLOB_INPUT_CONTAINER, selected_folder, doc_extensions)
+                if doc_blobs:
+                    selected_blob = st.selectbox(
+                        "Select a document",
+                        options=[""] + doc_blobs,
+                        format_func=lambda x: "(Choose one)" if x == "" else x,
+                        key="blob_doc_select",
                     )
-                    st.write(f"Step 1/6 — Source file uploaded. ({time.monotonic()-t0:.1f}s)")
-                    progress.progress(15, text="Step 2/6 — Running Azure Content Understanding…")
+                else:
+                    st.info("No document files in this folder.")
+        except Exception as e:
+            st.warning(f"Could not list blobs: {e}")
 
-                    # Step 2 — Azure Content Understanding extraction
-                    st.write("Step 2/6 — Running Azure Content Understanding (may take 30–120 s)…")
-                    t0 = time.monotonic()
-                    client = get_content_understanding_client()
-                    raw_result = client.analyze_document(
-                        analyzer_id=ANALYZER_ID,
-                        file_bytes=file_bytes,
-                        file_name=uploaded_file.name,
-                        content_type=content_type,
-                    )
-                    st.write(f"Step 2/6 — Extraction complete. ({time.monotonic()-t0:.1f}s)")
-                    progress.progress(40, text="💾 Step 3/6 — Saving raw JSON & normalizing in parallel…")
+    if selected_blob:
+        try:
+            file_bytes = download_blob_bytes(BLOB_INPUT_CONTAINER, selected_blob)
+        except Exception as e:
+            st.error(f"Could not download blob: {e}")
+        else:
+            file_name = selected_blob.split("_", 2)[-1] if selected_blob.count("_") >= 2 else selected_blob
+            file_ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+            file_mb = len(file_bytes) / (1024 * 1024)
 
-                    # Steps 3 & 4 — save raw JSON and normalize/save in parallel
-                    st.write("Step 3–4/6 — Saving raw JSON + normalizing document in parallel…")
-                    t0 = time.monotonic()
+            col1, col2, col3 = st.columns([3, 1, 1])
+            col1.info(f"{selected_blob}  size {file_mb:.2f} MB")
 
-                    def _save_raw():
-                        upload_json_to_blob(
-                            container_name=BLOB_OUTPUT_CONTAINER,
-                            blob_name=raw_json_blob,
-                            data=raw_result,
+            if file_mb > MAX_FILE_MB:
+                st.error(f"File exceeds the {MAX_FILE_MB} MB limit.")
+            elif col2.button("Run analysis", type="primary", use_container_width=True, key="run_blob"):
+                content_type = CONTENT_TYPE_MAP.get(file_ext, "application/octet-stream")
+                source_blob = selected_blob
+
+                with st.status("Running analysis pipeline...", expanded=True) as pipeline_status:
+                    try:
+                        progress = st.progress(0, text="Starting pipeline…")
+
+                        now = datetime.now(timezone.utc)
+                        created_utc = now.strftime("%Y%m%dT%H%M%SZ")
+                        doc_id = uuid4().hex
+
+                        raw_json_blob = f"{created_utc}_{doc_id}.content_understanding_raw.json"
+                        normalized_blob = f"{created_utc}_{doc_id}.normalized_document.json"
+                        log_blob = f"{created_utc}_{doc_id}.run_log.json"
+
+                        progress.progress(
+                            10,
+                            text="Step 1/5 — Source already in Blob. Step 2 — Running Content Understanding…",
                         )
-                        return build_raw_preview(raw_result)
+                        st.write("Step 1/5 — Source file already in Blob Storage.")
+                        st.write("Step 2/5 — Running Azure Content Understanding (may take 30–120 s)…")
 
-                    def _normalize_and_save():
-                        nd = build_normalized_document(
-                            raw_result,
-                            doc_id=doc_id,
-                            created_utc=created_utc,
-                            source_blob=source_blob,
-                            raw_json_blob=raw_json_blob,
-                            cu_analyzer_id=ANALYZER_ID,
-                            source_file_name=uploaded_file.name,
+                        t0 = time.monotonic()
+                        client = get_content_understanding_client()
+                        raw_result = client.analyze_document(
+                            analyzer_id=ANALYZER_ID,
+                            file_bytes=file_bytes,
+                            file_name=file_name,
+                            content_type=content_type,
                         )
-                        upload_json_to_blob(
-                            container_name=BLOB_OUTPUT_CONTAINER,
-                            blob_name=normalized_blob,
-                            data=nd,
-                        )
-                        return nd
+                        st.write(f"Step 2/5 — Extraction complete. ({time.monotonic() - t0:.1f}s)")
 
-                    with ThreadPoolExecutor(max_workers=2) as pool:
-                        fut_raw = pool.submit(_save_raw)
-                        fut_norm = pool.submit(_normalize_and_save)
-                        raw_preview = fut_raw.result()
-                        normalized_document = fut_norm.result()
+                        conf_summary = compute_confidence_summary(raw_result)
+                        st.session_state["conf_summary"] = conf_summary
 
-                    index_documents = build_index_documents(normalized_document)
-                    st.write(
-                        f"Step 3–4/6 — Raw JSON saved + normalized. "
-                        f"Prepared {len(index_documents)} chunk(s). ({time.monotonic()-t0:.1f}s)"
-                    )
-                    progress.progress(60, text="Step 5/6 — Generating embeddings & indexing…")
+                        quality_tmp = conf_summary.get("quality", "Unknown")
+                        mean_conf_tmp = conf_summary.get("mean_confidence")
+                        low_pct_tmp = conf_summary.get("low_conf_pct")
 
-                    # Step 5 — generate embeddings and index (reuse cached indexer)
-                    st.write("Step 5/6 — Generating embeddings and indexing into Azure AI Search…")
-                    t0 = time.monotonic()
-                    indexer = get_indexer()
-                    index_result = indexer.prepare_and_index_documents(
-                        normalized_document=normalized_document,
-                        index_documents=index_documents,
-                        add_vectors=True,
-                    )
-                    create_result = index_result.get("index_create_result", {})
-                    create_status = create_result.get("status", "unknown")
-                    uploaded_count = index_result.get("result", {}).get("uploaded", 0)
-                    failed_count = index_result.get("result", {}).get("failed", 0)
-                    index_name = index_result.get("index_name", "")
-                    st.write(
-                        f"Step 5/6 — Indexed {uploaded_count} chunk(s) into `{index_name}` "
-                        f"(failed: {failed_count}). ({time.monotonic()-t0:.1f}s)"
-                    )
-                    progress.progress(85, text="📋 Step 6/6 — Saving run log…")
-
-                    # Step 6 — save run log
-                    t0 = time.monotonic()
-                    log_data = {
-                        "doc_id": doc_id,
-                        "created_utc": created_utc,
-                        "file_name": uploaded_file.name,
-                        "input_blob": source_blob,
-                        "output_blob": raw_json_blob,
-                        "normalized_blob": normalized_blob,
-                        "analyzer_id": ANALYZER_ID,
-                        "status": raw_result.get("status"),
-                        "document_type": normalized_document.get("document_type"),
-                        "document_subtype": normalized_document.get("document_subtype"),
-                        "schema_id": normalized_document.get("schema_id"),
-                        "chunk_count": normalized_document.get("chunk_count"),
-                        "index_document_count": len(index_documents),
-                        "index_name": index_name,
-                        "index_create_status": create_status,
-                        "index_uploaded": uploaded_count,
-                        "index_failed": failed_count,
-                        "vectorized": index_result.get("vectorized"),
-                        "preview_summary": raw_preview.get("summary", {}),
-                    }
-                    upload_run_log(log_data, log_blob)
-                    total_elapsed = time.monotonic() - pipeline_start
-                    st.write(f"Step 6/6 — Run log saved. ({time.monotonic()-t0:.1f}s)")
-                    progress.progress(100, text=f"🎉 Pipeline complete in {total_elapsed:.1f}s")
-
-                    st.session_state["raw_result"] = raw_result
-                    st.session_state.pop("doc_qa_history", None)
-                    st.session_state["doc_id"] = doc_id
-                    st.session_state["created_utc"] = created_utc
-                    st.session_state["source_blob"] = source_blob
-                    st.session_state["raw_json_blob"] = raw_json_blob
-                    st.session_state["normalized_blob"] = normalized_blob
-                    st.session_state["log_blob"] = log_blob
-                    st.session_state["file_name"] = uploaded_file.name
-                    st.session_state["raw_preview"] = raw_preview
-                    st.session_state["normalized_document"] = normalized_document
-                    st.session_state["index_documents"] = index_documents
-                    st.session_state["index_result"] = index_result
-
-                    if failed_count == 0:
-                        if create_status == "already_exists":
-                            pipeline_status.update(
-                                label=f"Done in {total_elapsed:.1f}s — reused index `{index_name}`, indexed {uploaded_count} chunks.",
-                                state="complete",
-                                expanded=False,
+                        if quality_tmp == "Low":
+                            st.warning(
+                                f"⚠️ Low extraction confidence ({mean_conf_tmp:.0%} mean, "
+                                f"{low_pct_tmp}% of lines below 70%)."
                             )
-                        else:
-                            pipeline_status.update(
-                                label=f"Done in {total_elapsed:.1f}s — created index `{index_name}`, indexed {uploaded_count} chunks.",
-                                state="complete",
-                                expanded=False,
+                        elif quality_tmp == "Medium":
+                            st.info(
+                                f"ℹ️ Moderate extraction confidence ({mean_conf_tmp:.0%} mean, "
+                                f"{low_pct_tmp}% of lines below 70%)."
                             )
-                    else:
+
+                        progress.progress(40, text="Step 3–4/5 — Saving raw JSON and normalizing…")
+                        st.write("Step 3–4/5 — Saving raw JSON and normalizing document…")
+                        t0 = time.monotonic()
+
+                        def _save_raw():
+                            upload_json_to_blob(
+                                container_name=BLOB_OUTPUT_CONTAINER,
+                                blob_name=raw_json_blob,
+                                data=raw_result,
+                            )
+                            return build_raw_preview(raw_result)
+
+                        def _normalize_and_save():
+                            nd = build_normalized_document(
+                                raw_result,
+                                doc_id=doc_id,
+                                created_utc=created_utc,
+                                source_blob=source_blob,
+                                raw_json_blob=raw_json_blob,
+                                cu_analyzer_id=ANALYZER_ID,
+                                source_file_name=file_name,
+                            )
+                            upload_json_to_blob(
+                                container_name=BLOB_OUTPUT_CONTAINER,
+                                blob_name=normalized_blob,
+                                data=nd,
+                            )
+                            return nd
+
+                        with ThreadPoolExecutor(max_workers=2) as pool:
+                            fut_raw = pool.submit(_save_raw)
+                            fut_norm = pool.submit(_normalize_and_save)
+                            raw_preview = fut_raw.result()
+                            normalized_document = fut_norm.result()
+
+                        index_documents = build_index_documents(normalized_document)
+
+                        st.write(
+                            f"Step 3–4/5 — Raw JSON saved and normalized. "
+                            f"Prepared {len(index_documents)} chunk(s). ({time.monotonic() - t0:.1f}s)"
+                        )
+
+                        progress.progress(60, text="Step 5/5 — Generating embeddings and indexing…")
+                        st.write("Step 5/5 — Generating embeddings and indexing…")
+
+                        t0 = time.monotonic()
+                        indexer = get_indexer()
+                        index_result = indexer.prepare_and_index_documents(
+                            normalized_document=normalized_document,
+                            index_documents=index_documents,
+                            add_vectors=True,
+                        )
+
+                        create_result = index_result.get("index_create_result", {})
+                        create_status = create_result.get("status", "unknown")
+                        uploaded_count = index_result.get("result", {}).get("uploaded", 0)
+                        failed_count = index_result.get("result", {}).get("failed", 0)
+                        index_name = index_result.get("index_name", "")
+
+                        st.write(
+                            f"Step 5/5 — Indexed {uploaded_count} chunk(s) into `{index_name}` "
+                            f"(failed: {failed_count}). ({time.monotonic() - t0:.1f}s)"
+                        )
+                        progress.progress(100, text="Pipeline complete.")
+
+                        log_data = {
+                            "doc_id": doc_id,
+                            "created_utc": created_utc,
+                            "file_name": file_name,
+                            "input_blob": source_blob,
+                            "output_blob": raw_json_blob,
+                            "normalized_blob": normalized_blob,
+                            "analyzer_id": ANALYZER_ID,
+                            "status": raw_result.get("status"),
+                            "document_type": normalized_document.get("document_type"),
+                            "document_subtype": normalized_document.get("document_subtype"),
+                            "schema_id": normalized_document.get("schema_id"),
+                            "chunk_count": normalized_document.get("chunk_count"),
+                            "index_document_count": len(index_documents),
+                            "index_name": index_name,
+                            "index_create_status": create_status,
+                            "index_uploaded": uploaded_count,
+                            "index_failed": failed_count,
+                            "vectorized": index_result.get("vectorized"),
+                            "preview_summary": raw_preview.get("summary", {}),
+                        }
+                        upload_run_log(log_data, log_blob)
+
+                        st.session_state["raw_result"] = raw_result
+                        st.session_state["doc_id"] = doc_id
+                        st.session_state["created_utc"] = created_utc
+                        st.session_state["source_blob"] = source_blob
+                        st.session_state["raw_json_blob"] = raw_json_blob
+                        st.session_state["normalized_blob"] = normalized_blob
+                        st.session_state["log_blob"] = log_blob
+                        st.session_state["file_name"] = file_name
+                        st.session_state["raw_preview"] = raw_preview
+                        st.session_state["normalized_document"] = normalized_document
+                        st.session_state["index_documents"] = index_documents
+                        st.session_state["index_result"] = index_result
+                        st.session_state["doc_qa_history"] = []
+
+                        pipeline_status.update(label="Pipeline complete.", state="complete", expanded=False)
+                        st.rerun()
+
+                    except ContentUnderstandingError as exc:
                         pipeline_status.update(
-                            label=f"Done in {total_elapsed:.1f}s with warnings — {failed_count} chunk(s) failed to index.",
-                            state="complete",
+                            label="❌ Content Understanding extraction failed.",
+                            state="error",
                             expanded=True,
                         )
+                        st.error(f"Analysis failed: {exc}")
+                    except SearchIndexerError as exc:
+                        pipeline_status.update(
+                            label="❌ Azure AI Search indexing failed.",
+                            state="error",
+                            expanded=True,
+                        )
+                        st.error(f"Azure AI Search indexing failed: {exc}")
+                    except Exception as exc:
+                        pipeline_status.update(label="❌ Pipeline error.", state="error", expanded=True)
+                        st.error(f"Pipeline error: {exc}")
 
-                except ContentUnderstandingError as exc:
-                    pipeline_status.update(label="❌ Content Understanding extraction failed.", state="error", expanded=True)
-                    st.error(f"Analysis failed: {exc}")
-                    st.stop()
-                except SearchIndexerError as exc:
-                    pipeline_status.update(label="❌ Azure AI Search indexing failed.", state="error", expanded=True)
-                    st.error(f"Azure AI Search indexing failed: {exc}")
-                    st.stop()
-                except Exception as exc:
-                    pipeline_status.update(label="❌ Pipeline error.", state="error", expanded=True)
-                    st.error(f"Pipeline error: {exc}")
-                    st.stop()
-
-        if col3.button("Clear", use_container_width=True):
-            for key in [
-                "doc_id",
-                "created_utc",
-                "source_blob",
-                "raw_json_blob",
-                "normalized_blob",
-                "log_blob",
-                "file_name",
-                "raw_preview",
-                "normalized_document",
-                "index_documents",
-                "index_result",
-            ]:
-                st.session_state.pop(key, None)
-            st.rerun()
+            if col3.button("Clear", use_container_width=True, key="clear_blob"):
+                for key in [
+                    "doc_id",
+                    "created_utc",
+                    "source_blob",
+                    "raw_json_blob",
+                    "normalized_blob",
+                    "log_blob",
+                    "file_name",
+                    "raw_preview",
+                    "normalized_document",
+                    "index_documents",
+                    "index_result",
+                    "conf_summary",
+                    "raw_result",
+                    "doc_qa_history",
+                ]:
+                    st.session_state.pop(key, None)
+                st.rerun()
 
     if "raw_json_blob" in st.session_state:
+        conf_summary = st.session_state.get("conf_summary")
+        if conf_summary:
+            quality = conf_summary.get("quality", "Unknown")
+            mean_conf = conf_summary.get("mean_confidence")
+            min_conf = conf_summary.get("min_confidence")
+            low_pct = conf_summary.get("low_conf_pct")
+            total_lines = conf_summary.get("total_lines", 0)
+            warning_text = conf_summary.get("warning", "")
+
+            conf_col1, conf_col2, conf_col3, conf_col4 = st.columns(4)
+            conf_col1.metric("Extraction Quality", quality)
+            conf_col2.metric("Mean Confidence", f"{mean_conf:.0%}" if mean_conf is not None else "N/A")
+            conf_col3.metric("Min Confidence", f"{min_conf:.0%}" if min_conf is not None else "N/A")
+            conf_col4.metric("Lines < 70% Conf.", f"{low_pct}%" if low_pct is not None else "N/A")
+
+            if quality == "Low":
+                st.error(f"⚠️ {warning_text}")
+            elif quality == "Medium":
+                st.warning(f"ℹ️ {warning_text}")
+
         raw_preview = st.session_state.get("raw_preview", {})
         raw_preview_str = json.dumps(raw_preview, indent=2, default=str)
 
@@ -381,16 +489,6 @@ with tab_upload:
 
         with st.container(height=420):
             st.code(raw_preview_str, language="json", line_numbers=True)
-
-        meta_col1, meta_col2, meta_col3 = st.columns(3)
-        # meta_col1.metric("Doc ID", st.session_state.get("doc_id", ""))
-        # meta_col2.metric("Analyzer", ANALYZER_ID)
-        meta_col1.metric("Blob Saved", "Yes")
-
-        # st.caption(f"Input blob: `{st.session_state.get('source_blob', '')}`")
-        # st.caption(f"Raw JSON blob: `{st.session_state.get('raw_json_blob', '')}`")
-        # st.caption(f"Normalized blob: `{st.session_state.get('normalized_blob', '')}`")
-        # st.caption(f"Log blob: `{st.session_state.get('log_blob', '')}`")
 
         try:
             raw_bytes = download_blob_bytes(
@@ -426,9 +524,9 @@ with tab_upload:
 
         with st.container(height=420):
             st.code(normalized_document_str, language="json", line_numbers=True)
-        
+
         try:
-            raw_bytes = download_blob_bytes(
+            norm_bytes = download_blob_bytes(
                 BLOB_OUTPUT_CONTAINER,
                 st.session_state["normalized_blob"],
             )
@@ -441,7 +539,7 @@ with tab_upload:
 
             st.download_button(
                 "Download full normalized JSON",
-                data=raw_bytes,
+                data=norm_bytes,
                 file_name=download_file_name,
                 mime="application/json",
                 use_container_width=True,
@@ -449,76 +547,39 @@ with tab_upload:
         except Exception as exc:
             st.warning(f"Could not download normalized JSON from blob: {exc}")
 
-    # if st.session_state.get("index_documents"):
-    #     st.divider()
-    #     st.subheader("Prepared index documents")
+with tab_ask:
+    if st.session_state.get("normalized_document"):
+        file_name_current = st.session_state.get("file_name", "")
 
-    #     index_documents = st.session_state["index_documents"]
-    #     st.caption(f"Prepared {len(index_documents)} chunk documents for Azure AI Search.")
-
-    #     preview_docs = index_documents[:5]
-    #     preview_docs_str = json.dumps(preview_docs, indent=2, default=str)
-
-    #     with st.container(height=min(420, 500)):
-    #         st.code(preview_docs_str, language="json", line_numbers=True)
-
-    if st.session_state.get("index_result"):
-        st.divider()
-        st.subheader("Azure AI Search indexing result")
-
-        index_result = st.session_state["index_result"]
-        result = index_result.get("result", {})
-        create_result = index_result.get("index_create_result", {})
-
-        col1, col2 = st.columns(2)
-        col1.metric("Index name", index_result.get("index_name", ""))
-        col2.metric("Chunks prepared", index_result.get("chunk_count", 0))
-        # col3.metric("Uploaded", result.get("uploaded", 0))
-        # col4.metric("Failed", result.get("failed", 0))
-
-        # st.caption(f"Document type: `{index_result.get('document_type', '')}`")
-        # st.caption(f"Document ID: `{index_result.get('document_id', '')}`")
-        # st.caption(f"Vectors added: `{index_result.get('vectorized', False)}`")
-        # st.caption(f"Index create status: `{create_result.get('status', 'unknown')}`")
-
-        # index_result_str = json.dumps(index_result, indent=2, default=str)
-        # with st.container(height=min(420, 450)):
-        #     st.code(index_result_str, language="json", line_numbers=True)
-
-    # ── Inline Document Q&A ───────────────────────────────────────────────────
-    
-if st.session_state.get("raw_result"):
-    with tab_ask:
-        st.subheader("🔍 Search Across All Indexed Documents")
-        st.caption("Uses Azure AI Search + Azure OpenAI to answer questions across all indexed documents.")
-
-        # Show hint about last indexed document
-        _last_index_result = st.session_state.get("index_result")
-        if _last_index_result:
-            _last_index  = _last_index_result.get("index_name", "")
-            _last_type   = _last_index_result.get("document_type", "")
-            _last_file   = st.session_state.get("file_name", "")
-            st.info(
-                f"📄 Last indexed: **{_last_file}** → `{_last_index}` "
-                f"(type: `{_last_type}`) — select the matching document type below."
-            )
-        st.divider()
-        st.subheader("💬 Ask questions about this document")
-        st.caption(
-            "Answered **directly from the extracted JSON** — no search index needed. "
-            "Scoped to this document only."
+        st.markdown(
+            '<p style="color: #64748b; font-size: 0.875rem; margin-bottom: 0.5rem;">Current document</p>',
+            unsafe_allow_html=True,
         )
 
-        col_q, col_btn = st.columns([5, 1])
+        if file_name_current:
+            st.markdown(
+                f'<p style="color: #1e293b; font-size: 1rem; font-weight: 600; margin-bottom: 1.5rem;">{file_name_current}</p>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown(
+            '<p style="color: #475569; font-size: 0.9rem; margin-bottom: 1rem;">'
+            "Enter your question below to query the indexed document using retrieval."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+
         with st.form(key="doc_qa_form", border=False):
             col_q, col_btn = st.columns([5, 1])
+
             with col_q:
                 doc_question = st.text_input(
                     "Question",
-                    placeholder="e.g. What is the total ordinary business income? Who are the partners?",
+                    placeholder="e.g. What is the leased square footage for North America?",
                     label_visibility="collapsed",
                     key="doc_qa_input",
                 )
+
             with col_btn:
                 doc_ask = st.form_submit_button("Ask", type="primary", use_container_width=True)
 
@@ -526,138 +587,139 @@ if st.session_state.get("raw_result"):
             if not doc_question.strip():
                 st.warning("Please enter a question.")
             else:
-                with st.spinner("Querying Azure OpenAI with extracted document context..."):
+                with st.spinner("Searching indexed chunks and generating grounded answer..."):
                     try:
-                        qa_result = ask_about_document(
-                            question=doc_question,
-                            document_json=st.session_state["raw_result"],
-                            file_name=st.session_state.get("file_name", ""),
+                        retrieval = get_retrieval_pipeline()
+
+                        normalized_document = st.session_state.get("normalized_document", {})
+                        forced_document_type = normalized_document.get("document_type")
+                        current_doc_id = st.session_state.get("doc_id")
+
+                        filter_expression = None
+                        if current_doc_id:
+                            filter_expression = f"document_id eq '{current_doc_id}'"
+
+                        qa_result = retrieval.answer(
+                            query=doc_question,
+                            forced_document_type=forced_document_type,
+                            top_k=8,
+                            filter_expression=filter_expression,
+                            use_semantic=False,
                         )
-                        history: list = st.session_state.get("doc_qa_history", [])
-                        history.insert(0, {
-                            "question": doc_question,
-                            "answer":   qa_result.get("answer", ""),
-                            "grounded": qa_result.get("grounded", False),
-                            "model":    qa_result.get("model_used", ""),
-                        })
+
+                        conf_summary = st.session_state.get("conf_summary", {})
+                        mean_conf = conf_summary.get("mean_confidence")
+                        quality = conf_summary.get("quality", "Unknown")
+                        grounded = bool(qa_result.get("grounded", False))
+
+                        if mean_conf is None:
+                            base_score = 0.50
+                        else:
+                            base_score = float(mean_conf)
+
+                        if grounded:
+                            base_score += 0.05
+                        else:
+                            base_score -= 0.20
+
+                        if quality == "High":
+                            base_score += 0.05
+                        elif quality == "Low":
+                            base_score -= 0.10
+                        elif quality == "Unknown":
+                            base_score -= 0.05
+
+                        answer_confidence_score = max(0.0, min(0.99, round(base_score, 3)))
+
+                        if answer_confidence_score >= 0.85:
+                            answer_confidence_label = "High"
+                        elif answer_confidence_score >= 0.65:
+                            answer_confidence_label = "Medium"
+                        else:
+                            answer_confidence_label = "Low"
+
+                        history = st.session_state.get("doc_qa_history", [])
+                        history.insert(
+                            0,
+                            {
+                                "question": doc_question,
+                                "answer": qa_result.get("answer", ""),
+                                "grounded": grounded,
+                                "model": "retrieval_pipeline",
+                                "ocr_warnings": [],
+                                "doc_quality": quality,
+                                "answer_confidence_score": answer_confidence_score,
+                                "answer_confidence_label": answer_confidence_label,
+                                "citations": qa_result.get("citations", []),
+                                "retrieved_chunks": qa_result.get("results", []),
+                                "index_name": qa_result.get("index_name", ""),
+                                "vector_mode_used": qa_result.get("vector_mode_used", False),
+                            },
+                        )
                         st.session_state["doc_qa_history"] = history
                         st.rerun()
-                    except DocumentQAError as exc:
+
+                    except RetrievalError as exc:
+                        st.error(f"Retrieval Q&A failed: {exc}")
+                    except Exception as exc:
                         st.error(f"Q&A failed: {exc}")
 
-        for qa in st.session_state.get("doc_qa_history", []):
-            icon = "✅" if qa["grounded"] else "⚠️"
+        history_items = st.session_state.get("doc_qa_history", [])
+        if history_items:
+            st.divider()
+            st.subheader("Answers")
+
+        for qa in history_items:
             with st.container(border=True):
                 st.markdown(f"**Q:** {qa['question']}")
-                st.success(qa["answer"])
-                st.caption(f"{icon} Grounded from extracted document | Model: `{qa['model']}`")
 
-        if st.session_state.get("doc_qa_history"):
-            if st.button("Clear Q&A history", key="clear_doc_qa"):
-                st.session_state.pop("doc_qa_history", None)
-                st.rerun()
+                meta1, meta2, meta3 = st.columns(3)
+                meta1.metric(
+                    "Answer Confidence",
+                    f"{qa['answer_confidence_score']:.0%}" if qa.get("answer_confidence_score") is not None else "N/A",
+                )
+                meta2.metric(
+                    "Confidence Level",
+                    qa.get("answer_confidence_label", "Unknown"),
+                )
+                meta3.metric(
+                    "Grounded",
+                    "Yes" if qa.get("grounded") else "No",
+                )
 
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    # st.subheader("🔍 Search Across All Indexed Documents")
-    # st.caption("Uses Azure AI Search + Azure OpenAI to answer questions across all indexed documents.")
+                st.success(qa.get("answer", ""))
 
-    # # Show hint about last indexed document
-    # _last_index_result = st.session_state.get("index_result")
-    # if _last_index_result:
-    #     _last_index  = _last_index_result.get("index_name", "")
-    #     _last_type   = _last_index_result.get("document_type", "")
-    #     _last_file   = st.session_state.get("file_name", "")
-    #     st.info(
-    #         f"📄 Last indexed: **{_last_file}** → `{_last_index}` "
-    #         f"(type: `{_last_type}`) — select the matching document type below."
-    #     )
+                if qa.get("doc_quality"):
+                    st.caption(f"Document quality used for confidence derivation: {qa['doc_quality']}")
 
-    # _type_options = ["auto", "tax_document", "financial_document", "generic_document"]
-    # _last_doc_type = (_last_index_result or {}).get("document_type", "")
-    # _default_type_idx = _type_options.index(_last_doc_type) if _last_doc_type in _type_options else 0
+                if qa.get("index_name"):
+                    st.caption(
+                        f"Index used: {qa['index_name']} | "
+                        f"Vector search: {'Yes' if qa.get('vector_mode_used') else 'No'}"
+                    )
 
-    # with st.form(key="ask_form", border=False):
-    #     question = st.text_input(
-    #         "Ask a question",
-    #         placeholder="e.g. What is the total ordinary business income?",
-    #     )
+                if qa.get("citations"):
+                    st.markdown("**Citations**")
+                    for c in qa["citations"]:
+                        rank = c.get("rank", "")
+                        page_number = c.get("page_number", "")
+                        chunk_id = c.get("chunk_id", "")
+                        source_file_name = c.get("source_file_name", "")
+                        st.write(
+                            f"Rank {rank} | File: {source_file_name} | Page {page_number} | Chunk {chunk_id}"
+                        )
 
-    #     col_type, col_topk, col_semantic = st.columns([2, 1, 1])
-    #     with col_type:
-    #         forced_type = st.selectbox(
-    #             "Document type",
-    #             _type_options,
-    #             index=_default_type_idx,
-    #             help="Select the type matching your document. 'auto' uses keyword routing which may be inaccurate.",
-    #         )
-    #     with col_topk:
-    #         top_k = st.slider(
-    #             "Top chunks to retrieve",
-    #             min_value=1,
-    #             max_value=10,
-    #             value=5,
-    #             step=1,
-    #         )
-    #     with col_semantic:
-    #         st.write("")  # vertical alignment spacer
-    #         use_semantic = st.checkbox("Use semantic ranking", value=False)
+                if qa.get("retrieved_chunks"):
+                    with st.expander("Retrieved chunks"):
+                        for i, chunk in enumerate(qa["retrieved_chunks"], start=1):
+                            page_number = chunk.get("page_number", "N/A")
+                            chunk_id = chunk.get("chunk_id", "N/A")
+                            score = chunk.get("@search.score")
+                            score_text = f"{score:.4f}" if isinstance(score, (int, float)) else "N/A"
 
-    #     ask_clicked = st.form_submit_button("Ask", type="primary", use_container_width=True)
-
-    # if ask_clicked:
-    #     if not question.strip():
-    #         st.warning("Please enter a question.")
-    #     else:
-    #         try:
-    #             with st.spinner("Retrieving relevant chunks and generating answer..."):
-    #                 _t0 = time.monotonic()
-    #                 result = get_retrieval_pipeline().answer(
-    #                     query=question,
-    #                     forced_document_type=None if forced_type == "auto" else forced_type,
-    #                     top_k=top_k,
-    #                     use_semantic=use_semantic,
-    #                 )
-    #                 result["elapsed_sec"] = round(time.monotonic() - _t0, 1)
-
-    #             st.session_state["qa_result"] = result
-
-    #         except RetrievalError as exc:
-    #             st.error(f"Retrieval failed: {exc}")
-    #         except Exception as exc:
-    #             st.error(f"Question answering failed: {exc}")
-
-    # qa_result = st.session_state.get("qa_result")
-
-    # if qa_result:
-    #     st.divider()
-    #     st.subheader("Answer")
-    #     st.write(qa_result.get("answer", ""))
-
-    #     info_col1, info_col2, info_col3 = st.columns(3)
-    #     info_col1.metric("Index used", qa_result.get("index_name", ""))
-    #     info_col2.metric("Document type", qa_result.get("document_type", ""))
-    #     info_col3.metric("Vector mode", "Yes" if qa_result.get("vector_mode_used") else "No")
-
-    #     grounded = qa_result.get("grounded")
-    #     elapsed = qa_result.get("elapsed_sec", "")
-    #     st.caption(f"Grounded: `{grounded}` | Query time: `{elapsed}s`")
-
-    #     st.divider()
-    #     st.subheader("Citations")
-    #     st.json(qa_result.get("citations", []), expanded=False)
-
-    #     st.divider()
-    #     st.subheader("Top retrieved chunks")
-    #     st.json(qa_result.get("results", [])[:3], expanded=False)
+                            st.markdown(
+                                f"**Chunk {i}** | Page: {page_number} | Chunk ID: {chunk_id} | Search score: {score_text}"
+                            )
+                            st.code(chunk.get("content", ""), language="text")
+    else:
+        st.info("Analyze a document first in the Upload and Index tab, then ask questions here.")

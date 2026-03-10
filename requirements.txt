@@ -1,3 +1,4 @@
+Pillow
 streamlit
 python_dotenv
 azure_storage_blob
