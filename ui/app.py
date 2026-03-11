@@ -14,6 +14,7 @@ This version:
 10. Provides download options for raw and normalized JSON
 11. Uses retrieval-based Q&A in the second tab
 12. Filters retrieval to the current document_id
+13. Loads UI styling from a separate styles.css file
 """
 
 import base64
@@ -54,6 +55,13 @@ from ingest.transform import (
 )
 from core.indexer import AzureAISearchIndexer, SearchIndexerError
 from core.retrieval_llm import RetrievalPipeline, RetrievalError
+
+
+def load_css(file_name: str) -> None:
+    css_path = os.path.join(CURRENT_DIR, file_name)
+    if os.path.exists(css_path):
+        with open(css_path, "r", encoding="utf-8") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 
 def _list_blobs(container_name: str, name_starts_with: str = ""):
@@ -140,58 +148,12 @@ def upload_run_log(log_data: dict, blob_name: str) -> str:
 
 
 st.set_page_config(
-    page_title="Baker Hill Document INSIGHT",
+    page_title="Tax and Financial Statements Extraction Agent",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-st.markdown(
-    """
-<style>
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0;
-        border-bottom: 1px solid #e2e8f0;
-        margin-bottom: 1.5rem;
-    }
-    .stTabs [data-baseweb="tab"] {
-        padding: 14px 28px;
-        font-weight: 500;
-        font-size: 0.95rem;
-        color: #64748b;
-        border: none;
-        border-bottom: 3px solid transparent;
-        border-radius: 0;
-    }
-    .stTabs [data-baseweb="tab"]:hover { color: #1e293b; }
-    .stTabs [aria-selected="true"] {
-        color: #1e3a5f;
-        background: transparent;
-        border-bottom: 3px solid #1e3a5f;
-    }
-    .stButton > button {
-        background-color: #1e3a5f !important;
-        color: white !important;
-        border: none !important;
-        padding: 10px 24px !important;
-        border-radius: 6px !important;
-        font-weight: 500 !important;
-        transition: background-color 0.2s;
-    }
-    .stButton > button:hover {
-        background-color: #2c5282 !important;
-        color: white !important;
-    }
-    .stTextInput > div > div > input {
-        border-radius: 6px !important;
-        border: 1px solid #e2e8f0 !important;
-    }
-    .stSuccess, .block-container { padding-top: 1rem !important; }
-    h1, h2, h3 { color: #1e293b !important; font-weight: 600 !important; }
-    .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+load_css("styles.css")
 
 _logo_paths = [
     os.path.join(CURRENT_DIR, "css", "logo.png"),
@@ -212,12 +174,12 @@ if _logo_b64:
         f'<div style="display: flex; align-items: center; gap: 1.5rem; margin-bottom: 2rem; padding: 0.75rem 0;">'
         f'<img src="data:image/png;base64,{_logo_b64}" style="height: 76px; width: auto; max-width: 200px; object-fit: contain; flex-shrink: 0;" alt="Baker Hill" />'
         f'<div style="border-left: 2px solid #e2e8f0; height: 44px;"></div>'
-        f'<h1 style="margin: 0; color: #1e293b; font-weight: 600; font-size: 2rem; letter-spacing: -0.02em;">Baker Hill Document Insight</h1>'
+        f'<h1 style="margin: 0; color: #1e293b; font-weight: 600; font-size: 2rem; letter-spacing: -0.02em;">Tax and Financial Statements Extraction Agent</h1>'
         f"</div>",
         unsafe_allow_html=True,
     )
 else:
-    st.title("Baker Hill Document Insight")
+    st.title("Tax and Financial Statements Extraction Agent")
 
 tab_upload, tab_ask = st.tabs(["Upload and Index", "Ask Questions"])
 
