@@ -40,6 +40,7 @@ from core.conf_score import (
     ContentUnderstandingClient,
     ContentUnderstandingError,
     default_analyzer_id,
+    detect_document_schema,
 )
 from ingest.storage import (
     upload_json_to_blob,
@@ -55,6 +56,10 @@ from ingest.transform import (
 )
 from core.indexer import AzureAISearchIndexer, SearchIndexerError
 from core.retrieval_llm import RetrievalPipeline, RetrievalError
+from financial_spreading.schema_loader import load_coa_schema
+from financial_spreading.extract_rows import extract_rows_from_cu
+from financial_spreading.statement_mapper import spread_statement
+from financial_spreading.output_builder import build_output as build_spread_output
 
 
 def load_css(file_name: str) -> None:
@@ -228,7 +233,7 @@ with tab_upload:
 
             if file_mb > MAX_FILE_MB:
                 st.error(f"File exceeds the {MAX_FILE_MB} MB limit.")
-            elif col2.button("Run analysis", type="primary", use_container_width=True, key="run_blob"):
+            elif col2.button("Run analysis", type="primary", width='stretch', key="run_blob"):
                 content_type = CONTENT_TYPE_MAP.get(file_ext, "application/octet-stream")
                 source_blob = selected_blob
 
@@ -242,6 +247,7 @@ with tab_upload:
 
                         raw_json_blob = f"{created_utc}_{doc_id}.content_understanding_raw.json"
                         normalized_blob = f"{created_utc}_{doc_id}.normalized_document.json"
+                        spread_blob = f"{created_utc}_{doc_id}.spread.json"
                         log_blob = f"{created_utc}_{doc_id}.run_log.json"
 
                         progress.progress(
@@ -279,6 +285,39 @@ with tab_upload:
                                 f"{low_pct_tmp}% of lines below 70%)."
                             )
 
+                        # ── Financial Spreading (tax documents only) ─────────────────────
+                        _doc_route = detect_document_schema(raw_result)
+                        _doc_type = _doc_route.get("document_type", "generic_document")
+                        spread_json = {}
+                        if _doc_type == "tax_document":
+                            progress.progress(35, text="Step 2b/5 — Running financial spreading…")
+                            st.write("Step 2b/5 — Running financial spreading (COA mapping)…")
+                            try:
+                                _coa_schema = load_coa_schema(document_type=_doc_type)
+                                _fin_rows = extract_rows_from_cu(raw_result)
+                                _mapped, _unmatched = spread_statement(_fin_rows, _coa_schema)
+                                spread_json = build_spread_output(
+                                    document_name=file_name,
+                                    document_id=doc_id,
+                                    mapped_rows=_mapped,
+                                    unmatched=_unmatched,
+                                    created_utc=created_utc,
+                                    source_blob=source_blob,
+                                )
+                                st.write(
+                                    f"Step 2b/5 — Spread complete: "
+                                    f"{spread_json['summary']['mapped_row_count']} mapped rows."
+                                )
+                            except Exception as _spread_exc:
+                                st.warning(f"Financial spreading skipped: {_spread_exc}")
+                        else:
+                            progress.progress(35, text="Step 2b/5 — Spreading skipped (not a tax document)")
+                            st.write(
+                                f"Step 2b/5 — Financial spreading skipped "
+                                f"(document type: **{_doc_type}** — spreading applies to tax documents only)."
+                            )
+                        # ────────────────────────────────────────────────────────────────────
+
                         progress.progress(40, text="Step 3–4/5 — Saving raw JSON and normalizing…")
                         st.write("Step 3–4/5 — Saving raw JSON and normalizing document…")
                         t0 = time.monotonic()
@@ -313,6 +352,17 @@ with tab_upload:
                             fut_norm = pool.submit(_normalize_and_save)
                             raw_preview = fut_raw.result()
                             normalized_document = fut_norm.result()
+
+                        # Save spread JSON to blob (non-blocking; failure is non-fatal)
+                        if spread_json:
+                            try:
+                                upload_json_to_blob(
+                                    container_name=BLOB_OUTPUT_CONTAINER,
+                                    blob_name=spread_blob,
+                                    data=spread_json,
+                                )
+                            except Exception as _blob_exc:
+                                st.warning(f"Could not save spread JSON to blob: {_blob_exc}")
 
                         index_documents = build_index_documents(normalized_document)
 
@@ -373,6 +423,8 @@ with tab_upload:
                         st.session_state["source_blob"] = source_blob
                         st.session_state["raw_json_blob"] = raw_json_blob
                         st.session_state["normalized_blob"] = normalized_blob
+                        st.session_state["spread_blob"] = spread_blob
+                        st.session_state["spread_json"] = spread_json
                         st.session_state["log_blob"] = log_blob
                         st.session_state["file_name"] = file_name
                         st.session_state["raw_preview"] = raw_preview
@@ -402,13 +454,15 @@ with tab_upload:
                         pipeline_status.update(label="❌ Pipeline error.", state="error", expanded=True)
                         st.error(f"Pipeline error: {exc}")
 
-            if col3.button("Clear", use_container_width=True, key="clear_blob"):
+            if col3.button("Clear", width='stretch', key="clear_blob"):
                 for key in [
                     "doc_id",
                     "created_utc",
                     "source_blob",
                     "raw_json_blob",
                     "normalized_blob",
+                    "spread_blob",
+                    "spread_json",
                     "log_blob",
                     "file_name",
                     "raw_preview",
@@ -469,7 +523,7 @@ with tab_upload:
                 data=raw_bytes,
                 file_name=download_file_name,
                 mime="application/json",
-                use_container_width=True,
+                width='stretch',
             )
         except Exception as exc:
             st.warning(f"Could not download raw JSON from blob: {exc}")
@@ -504,10 +558,137 @@ with tab_upload:
                 data=norm_bytes,
                 file_name=download_file_name,
                 mime="application/json",
-                use_container_width=True,
+                width='stretch',
             )
         except Exception as exc:
             st.warning(f"Could not download normalized JSON from blob: {exc}")
+
+    # ------------------------------------------------------------------
+    # Financial Spreading section
+    # ------------------------------------------------------------------
+    spread_json = st.session_state.get("spread_json")
+    if spread_json and spread_json.get("rows") is not None:
+        import pandas as pd
+
+        st.divider()
+        st.subheader("Financial Spreading")
+
+        summary = spread_json.get("summary", {})
+        years_detected = spread_json.get("years_detected", [])
+
+        sc1, sc2, sc3 = st.columns(3)
+        sc1.metric("Mapped Rows",      summary.get("mapped_row_count", 0))
+        sc2.metric("Unique COA Lines", summary.get("unique_coa_lines", 0))
+        sc3.metric("Years Detected",   ", ".join(str(y) for y in years_detected) if years_detected else "—")
+
+        mapped_rows = spread_json.get("rows", [])
+        if mapped_rows:
+            df_spread = pd.DataFrame(mapped_rows)
+
+            # ── Filters ───────────────────────────────────────────────
+            f1, f2 = st.columns([2, 2])
+
+            # COA line filter
+            coa_options = sorted(df_spread["chart_of_account_line"].dropna().unique().tolist())
+            selected_coa = f1.multiselect(
+                "Filter by COA line",
+                options=coa_options,
+                default=coa_options,
+                key="spread_coa_filter",
+            )
+
+            # Confidence threshold
+            min_conf = f2.slider(
+                "Min confidence",
+                min_value=0.0, max_value=1.0,
+                value=0.0, step=0.05,
+                key="spread_conf_filter",
+            )
+
+            # Apply filters
+            df_filtered = df_spread.copy()
+            if selected_coa:
+                df_filtered = df_filtered[df_filtered["chart_of_account_line"].isin(selected_coa)]
+            df_filtered = df_filtered[df_filtered["confidence"] >= min_conf]
+
+            # ── Column order matching manager contract ─────────────────
+            # original_value is kept in df_filtered for display use but excluded from col_order
+            col_order = [
+                "chart_of_account_line", "row_label", "year", "value",
+                "original_value", "confidence", "reference", "source_label", "reasoning",
+            ]
+            df_filtered = df_filtered[[c for c in col_order if c in df_filtered.columns]]
+
+            # ── Colour confidence column ───────────────────────────────
+            def _colour_confidence(val):
+                try:
+                    v = float(val)
+                except Exception:
+                    return ""
+                if v >= 0.90:
+                    return "background-color: #dcfce7; color: #166534"
+                elif v >= 0.75:
+                    return "background-color: #fef9c3; color: #854d0e"
+                else:
+                    return "background-color: #fee2e2; color: #991b1b"
+
+            # Clean up numeric display — use original_value when available, else format with commas
+            def _fmt_value(v):
+                try:
+                    fv = float(v)
+                    if fv == int(fv):
+                        return f"{int(fv):,}"
+                    return f"{fv:,.2f}"
+                except Exception:
+                    return v
+
+            df_display = df_filtered.copy()
+            if "original_value" in df_display.columns and "value" in df_display.columns:
+                df_display["value"] = df_display.apply(
+                    lambda r: r["original_value"] if r.get("original_value") else _fmt_value(r["value"]),
+                    axis=1,
+                )
+                df_display = df_display.drop(columns=["original_value"])
+            elif "value" in df_display.columns:
+                df_display["value"] = df_display["value"].apply(_fmt_value)
+            if "confidence" in df_display.columns:
+                df_display["confidence"] = df_display["confidence"].apply(
+                    lambda v: f"{v:.2f}" if v is not None else v
+                )
+
+            st.dataframe(
+                df_display.style.map(_colour_confidence, subset=["confidence"]),
+                width='stretch',
+                height=420,
+            )
+            st.caption(f"Showing {len(df_filtered)} of {len(df_spread)} mapped rows")
+        else:
+            st.info(
+                "No financial rows were mapped. "
+                "This document may not contain recognised financial tables, "
+                "or the COA schema keywords did not match any extracted row labels."
+            )
+
+        with st.expander("Full spread JSON"):
+            st.code(
+                __import__("json").dumps(spread_json, indent=2, default=str),
+                language="json",
+                line_numbers=True,
+            )
+
+        # Download button
+        spread_file_name = make_output_json_filename(
+            input_file_name=st.session_state.get("file_name", "document.pdf"),
+            timestamp_utc=st.session_state.get("created_utc", "unknown"),
+            suffix="spread",
+        )
+        st.download_button(
+            "Download spread JSON",
+            data=__import__("json").dumps(spread_json, indent=2, default=str).encode("utf-8"),
+            file_name=spread_file_name,
+            mime="application/json",
+            width='stretch',
+        )
 
 with tab_ask:
     if st.session_state.get("normalized_document"):
@@ -543,7 +724,7 @@ with tab_ask:
                 )
 
             with col_btn:
-                doc_ask = st.form_submit_button("Ask", type="primary", use_container_width=True)
+                doc_ask = st.form_submit_button("Ask", type="primary", width='stretch')
 
         if doc_ask:
             if not doc_question.strip():

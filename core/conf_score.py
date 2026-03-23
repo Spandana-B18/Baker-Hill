@@ -728,128 +728,241 @@ def build_evidence_pack(
 
 
 def detect_document_schema(raw_result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Detect document type and subtype from the extracted CU result.
+
+    Detection order:
+    1. Exact tax form regex on first page and early document text
+    2. Weighted keyword scoring as fallback
+    3. Financial statement detection
+    4. Generic fallback
+    """
     lines = ContentUnderstandingClient.extract_lines_with_confidence(raw_result, aggregate_mode="mean")
-    paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(raw_result, aggregate_mode="mean")
+    paragraphs = ContentUnderstandingClient.extract_paragraphs_with_confidence(
+        raw_result,
+        aggregate_mode="mean",
+    )
 
-    samples: List[str] = []
-    for row in lines[:140]:
+    first_page_text_parts: List[str] = []
+    early_text_parts: List[str] = []
+
+    for row in lines[:180]:
         text = _normalize_space(row.get("text", ""))
-        if text:
-            samples.append(text.lower())
+        if not text:
+            continue
+        early_text_parts.append(text)
+        if _safe_int(row.get("page"), 0) == 1:
+            first_page_text_parts.append(text)
 
-    for row in paragraphs[:60]:
+    for row in paragraphs[:80]:
         text = _normalize_space(row.get("text", ""))
-        if text:
-            samples.append(text.lower())
+        if not text:
+            continue
+        early_text_parts.append(text)
+        if _safe_int(row.get("page"), 0) == 1:
+            first_page_text_parts.append(text)
 
-    joined = "\n".join(samples)
+    first_page_text = "\n".join(first_page_text_parts).lower()
+    early_text = "\n".join(early_text_parts).lower()
 
-    tax_patterns = {
-        "1120s": [
-            "form 1120-s",
-            "u.s. income tax return for an s corporation",
-            "s corporation",
-            "schedule l",
-            "ordinary business income",
-            "employer identification number",
-            "internal revenue service",
+    def _result(
+        *,
+        document_type: str,
+        document_subtype: str,
+        schema_id: str,
+        confidence_score: float,
+    ) -> Dict[str, Any]:
+        return {
+            "document_type": document_type,
+            "document_subtype": document_subtype,
+            "schema_id": schema_id,
+            "schema_version": "2024",
+            "confidence_score": round(confidence_score, 3),
+        }
+
+    exact_tax_rules: List[Tuple[str, str, str, List[str], float]] = [
+        (
+            "1120s",
+            "tax_1120s",
+            r"\bform\s*1120[\-\s]*s\b|\b1120[\-\s]*s\b|u\.s\.\s+income\s+tax\s+return\s+for\s+an\s+s\s+corporation",
+            ["schedule l", "s corporation", "ordinary business income"],
+            0.97,
+        ),
+        (
+            "k1",
+            "tax_k1",
+            r"\bschedule\s*k[\-\s]*1\b",
+            ["shareholder's share", "partner's share", "beneficiary's share"],
+            0.97,
+        ),
+        (
+            "1040",
+            "tax_1040",
+            r"\bform\s*1040\b|u\.s\.\s+individual\s+income\s+tax\s+return",
+            ["filing status", "adjusted gross income", "dependents"],
+            0.97,
+        ),
+        (
+            "1065",
+            "tax_1065",
+            r"\bform\s*1065\b|u\.s\.\s+return\s+of\s+partnership\s+income",
+            ["partnership", "ordinary business income", "schedule b"],
+            0.97,
+        ),
+        (
+            "1120",
+            "tax_1120",
+            r"\bform\s*1120\b|u\.s\.\s+corporation\s+income\s+tax\s+return",
+            ["corporation income tax return", "schedule l", "taxable income"],
+            0.97,
+        ),
+    ]
+
+    for subtype, schema_id, pattern, supporting_terms, confidence in exact_tax_rules:
+        if re.search(pattern, first_page_text, flags=re.IGNORECASE):
+            support_hits = sum(1 for term in supporting_terms if term in early_text)
+            boosted_conf = min(0.99, confidence + (0.005 * support_hits))
+            return _result(
+                document_type="tax_document",
+                document_subtype=subtype,
+                schema_id=schema_id,
+                confidence_score=boosted_conf,
+            )
+
+    for subtype, schema_id, pattern, supporting_terms, confidence in exact_tax_rules:
+        if re.search(pattern, early_text, flags=re.IGNORECASE):
+            support_hits = sum(1 for term in supporting_terms if term in early_text)
+            boosted_conf = min(0.98, 0.93 + (0.01 * support_hits))
+            return _result(
+                document_type="tax_document",
+                document_subtype=subtype,
+                schema_id=schema_id,
+                confidence_score=boosted_conf,
+            )
+
+    tax_patterns: Dict[str, List[Tuple[str, float]]] = {
+        "tax_1120s": [
+            ("form 1120-s", 5.0),
+            ("1120-s", 5.0),
+            ("u.s. income tax return for an s corporation", 5.0),
+            ("s corporation", 2.5),
+            ("schedule l", 1.0),
+            ("ordinary business income", 2.0),
+            ("shareholders", 1.5),
         ],
-        "k1": [
-            "schedule k-1",
-            "shareholder's share",
-            "partner's share",
-            "form 1065",
-            "form 1120s schedule k-1",
+        "tax_k1": [
+            ("schedule k-1", 5.0),
+            ("shareholder's share", 3.0),
+            ("partner's share", 3.0),
+            ("beneficiary's share", 3.0),
+            ("form 1065 schedule k-1", 5.0),
+            ("form 1120s schedule k-1", 5.0),
         ],
-        "1040": [
-            "form 1040",
-            "u.s. individual income tax return",
-            "filing status",
-            "adjusted gross income",
+        "tax_1040": [
+            ("form 1040", 5.0),
+            ("u.s. individual income tax return", 5.0),
+            ("filing status", 2.0),
+            ("adjusted gross income", 2.5),
+            ("dependents", 1.5),
+            ("standard deduction", 1.5),
+        ],
+        "tax_1065": [
+            ("form 1065", 5.0),
+            ("u.s. return of partnership income", 5.0),
+            ("partnership income", 2.5),
+            ("partners", 1.5),
+            ("schedule b", 1.0),
+        ],
+        "tax_1120": [
+            ("form 1120", 5.0),
+            ("u.s. corporation income tax return", 5.0),
+            ("corporation income tax return", 3.0),
+            ("taxable income", 1.5),
+            ("schedule l", 1.0),
         ],
     }
 
-    financial_patterns = [
-        "balance sheet",
-        "statement of financial position",
-        "income statement",
-        "statement of cash flows",
-        "statement of owner equity",
-        "statement of owners equity",
-        "ratio analysis",
-        "current assets",
-        "current liabilities",
-        "retained earnings",
-        "net income",
-        "total assets",
-        "total liabilities",
-        "cash and cash equivalents",
-        "accounts receivable",
-        "inventory",
+    financial_patterns: List[Tuple[str, float]] = [
+        ("balance sheet", 2.0),
+        ("statement of financial position", 3.0),
+        ("income statement", 2.5),
+        ("statement of cash flows", 2.5),
+        ("statement of owner equity", 2.0),
+        ("statement of owners equity", 2.0),
+        ("ratio analysis", 1.5),
+        ("current assets", 1.0),
+        ("current liabilities", 1.0),
+        ("retained earnings", 1.0),
+        ("net income", 1.0),
+        ("total assets", 1.0),
+        ("total liabilities", 1.0),
+        ("cash and cash equivalents", 1.0),
+        ("accounts receivable", 1.0),
+        ("inventory", 1.0),
     ]
 
     scores: Dict[str, float] = {
         "tax_1120s": 0.0,
         "tax_k1": 0.0,
         "tax_1040": 0.0,
+        "tax_1065": 0.0,
+        "tax_1120": 0.0,
         "financial_statement": 0.0,
         "generic_document": 0.0,
     }
 
-    for p in tax_patterns["1120s"]:
-        if p in joined:
-            scores["tax_1120s"] += 1.0
+    def _add_weighted_hits(target_scores: Dict[str, float], schema_id: str, patterns: List[Tuple[str, float]]) -> None:
+        for phrase, weight in patterns:
+            if phrase in early_text:
+                target_scores[schema_id] += weight
+            if phrase in first_page_text:
+                target_scores[schema_id] += weight * 0.5
 
-    for p in tax_patterns["k1"]:
-        if p in joined:
-            scores["tax_k1"] += 1.0
+    for schema_id, patterns in tax_patterns.items():
+        _add_weighted_hits(scores, schema_id, patterns)
 
-    for p in tax_patterns["1040"]:
-        if p in joined:
-            scores["tax_1040"] += 1.0
-
-    for p in financial_patterns:
-        if p in joined:
-            scores["financial_statement"] += 1.0
+    for phrase, weight in financial_patterns:
+        if phrase in early_text:
+            scores["financial_statement"] += weight
+        if phrase in first_page_text:
+            scores["financial_statement"] += weight * 0.5
 
     best_schema = max(scores, key=scores.get)
     best_score = scores[best_schema]
 
     if best_score <= 0:
-        return {
-            "document_type": "generic_document",
-            "document_subtype": "generic",
-            "schema_id": "generic_document",
-            "schema_version": "2024",
-            "confidence_score": 0.2,
-        }
+        return _result(
+            document_type="generic_document",
+            document_subtype="generic",
+            schema_id="generic_document",
+            confidence_score=0.2,
+        )
 
     if best_schema.startswith("tax_"):
         subtype = best_schema.replace("tax_", "")
-        return {
-            "document_type": "tax_document",
-            "document_subtype": subtype,
-            "schema_id": best_schema,
-            "schema_version": "2024",
-            "confidence_score": round(min(0.99, 0.55 + (0.06 * best_score)), 3),
-        }
+        confidence = min(0.94, 0.55 + (0.04 * best_score))
+        return _result(
+            document_type="tax_document",
+            document_subtype=subtype,
+            schema_id=best_schema,
+            confidence_score=confidence,
+        )
 
     if best_schema == "financial_statement":
-        return {
-            "document_type": "financial_document",
-            "document_subtype": "statement",
-            "schema_id": "financial_statement",
-            "schema_version": "2024",
-            "confidence_score": round(min(0.99, 0.55 + (0.04 * best_score)), 3),
-        }
+        confidence = min(0.94, 0.55 + (0.03 * best_score))
+        return _result(
+            document_type="financial_document",
+            document_subtype="statement",
+            schema_id="financial_statement",
+            confidence_score=confidence,
+        )
 
-    return {
-        "document_type": "generic_document",
-        "document_subtype": "generic",
-        "schema_id": "generic_document",
-        "schema_version": "2024",
-        "confidence_score": 0.2,
-    }
+    return _result(
+        document_type="generic_document",
+        document_subtype="generic",
+        schema_id="generic_document",
+        confidence_score=0.2,
+    )
 
 
 def _extract_document_title(raw_result: Dict[str, Any]) -> Optional[str]:
@@ -1428,4 +1541,3 @@ def build_dynamic_document_envelope(
     }
 
     return envelope
-
