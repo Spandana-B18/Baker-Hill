@@ -116,3 +116,5 @@ The app runs at `http://localhost:8501` by default.
 ## License
 
 Proprietary. All rights reserved.
+
+Final code
