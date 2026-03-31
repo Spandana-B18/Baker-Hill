@@ -1,0 +1,1272 @@
+[
+  {
+    "chart_of_account_line": "L0005",
+    "row_label": "Cash",
+    "keywords": ["Cash", "Cash and Cash Equivalents", "Cash and Equivalents", "All Cash", "Net Cash", "Total Cash", "Cash on Hand", "Cash in Bank"],
+    "typically_found_in": ["Balance Sheet", "Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0007",
+    "row_label": "Certificate of Deposit",
+    "keywords": ["Certificate of Deposit", "CD", "Time Deposit", "Term Deposit", "Bank Certificate", "CD Investment"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Short-Term Investments"]
+  },
+  {
+    "chart_of_account_line": "L0009",
+    "row_label": "Marketable Securities",
+    "keywords": ["Marketable Securities", "Short-Term Investments", "Temporary Investments", "Trading Securities", "Investment Securities", "U.S. Government obligations", "Tax-exempt securities", "US Government obligations"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Investments"]
+  },
+  {
+    "chart_of_account_line": "L0022",
+    "row_label": "Trade Accounts Receivable",
+    "keywords": ["Trade Accounts Receivable", "Accounts Receivable", "Trade Receivable", "Customer Receivables", "A/R", "Net Receivables", "Trade A/R"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0024.001",
+    "row_label": "A/R from Affiliates",
+    "keywords": ["A/R from Affiliates", "Receivable from Affiliates", "Due from Affiliates", "Affiliate Receivable"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0024.002",
+    "row_label": "A/R from Related",
+    "keywords": ["A/R from Related", "Receivable from Related", "Due from Related Parties", "Related Party Receivable", "A/R from Related Companies"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0025.001",
+    "row_label": "Other A/R",
+    "keywords": ["Other A/R", "Other Receivables", "Misc Receivables", "Other Accounts Receivable"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0025.002",
+    "row_label": "Other A/R",
+    "keywords": ["Other A/R", "Other Receivables", "Miscellaneous Receivables"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0025.003",
+    "row_label": "Other A/R",
+    "keywords": ["Other A/R", "Other Receivable"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0029",
+    "row_label": "Reserve for Bad Debts (-)",
+    "keywords": ["Reserve for Bad Debts", "Bad Debt Reserve", "Allowance for Doubtful Accounts", "Allowance for Bad Debts", "Provision for Bad Debts"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0031",
+    "row_label": "Net A/R",
+    "keywords": ["Net A/R", "Net Accounts Receivable", "Net Receivables", "Net Trade Receivable"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0034",
+    "row_label": "Trade Notes Receivable",
+    "keywords": ["Trade Notes Receivable", "Notes Receivable - Trade", "Promissory Notes Receivable"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0035",
+    "row_label": "Other Notes Rec. - Current",
+    "keywords": ["Other Notes Receivable", "Notes Rec. Current", "Current Notes Receivable", "Short-Term Notes Receivable"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0036",
+    "row_label": "Federal Income Tax Receivable",
+    "keywords": ["Federal Income Tax Receivable", "Income Tax Receivable", "Tax Refund Receivable", "Federal Tax Receivable"],
+    "typically_found_in": ["Balance Sheet", "Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0037.001",
+    "row_label": "Other Receivables",
+    "keywords": ["Other Receivables", "Miscellaneous Receivables", "Sundry Receivables"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0037.002",
+    "row_label": "Other Receivables",
+    "keywords": ["Other Receivables", "Other Current Receivables"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Receivables"]
+  },
+  {
+    "chart_of_account_line": "L0039.001",
+    "row_label": "Raw Materials",
+    "keywords": ["Raw Materials", "Raw Material Inventory", "Materials Inventory"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Inventory"]
+  },
+  {
+    "chart_of_account_line": "L0039.002",
+    "row_label": "Work in Progress",
+    "keywords": ["Work in Progress", "Work in Process", "WIP", "WIP Inventory"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Inventory"]
+  },
+  {
+    "chart_of_account_line": "L0039.003",
+    "row_label": "Finished Goods",
+    "keywords": ["Finished Goods", "Finished Goods Inventory", "Completed Goods"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Inventory"]
+  },
+  {
+    "chart_of_account_line": "L0039.004",
+    "row_label": "Other Inventory",
+    "keywords": ["Other Inventory", "Miscellaneous Inventory", "Supplies Inventory"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Inventory"]
+  },
+  {
+    "chart_of_account_line": "L0039.005",
+    "row_label": "Other Inventory",
+    "keywords": ["Other Inventory", "Additional Inventory"],
+    "typically_found_in": ["Balance Sheet", "Current Assets", "Inventory"]
+  },
+  {
+    "chart_of_account_line": "L0044",
+    "row_label": "Total Inventory",
+    "keywords": ["Total Inventory", "Inventories", "Inventory Total", "Total Inventories"],
+    "typically_found_in": ["Balance Sheet", "Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0047",
+    "row_label": "Prepaid Expenses",
+    "keywords": ["Prepaid Expenses", "Prepaid Costs", "Prepayments", "Prepaid Assets", "Deferred Expenses"],
+    "typically_found_in": ["Balance Sheet", "Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0050",
+    "row_label": "Costs in Excess of Billings",
+    "keywords": ["Costs in Excess of Billings", "Unbilled Revenue", "Underbillings", "Contract Assets"],
+    "typically_found_in": ["Balance Sheet", "Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0052.001",
+    "row_label": "Other Current Assets",
+    "keywords": ["Other Current Assets", "Miscellaneous Current Assets"],
+    "typically_found_in": ["Balance Sheet", "Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0052.002",
+    "row_label": "Other Current Assets",
+    "keywords": ["Other Current Assets", "Other Short-Term Assets"],
+    "typically_found_in": ["Balance Sheet", "Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0052.003",
+    "row_label": "Other Current Assets",
+    "keywords": ["Other Current Assets"],
+    "typically_found_in": ["Balance Sheet", "Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0055",
+    "row_label": "Total Current Assets",
+    "keywords": ["Total Current Assets", "Current Assets Total", "Total Current", "Current Assets"],
+    "typically_found_in": ["Balance Sheet"]
+  },
+  {
+    "chart_of_account_line": "L0061",
+    "row_label": "Notes Receivable - Non current",
+    "keywords": ["Notes Receivable Non current", "Long-Term Notes Receivable", "Non-Current Notes Receivable", "Notes Receivable Long Term", "Mortgage and real estate loans"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0062.001",
+    "row_label": "Due from Affiliates",
+    "keywords": ["Due from Affiliates", "Receivable from Affiliates", "Affiliate Receivables Long Term"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0062.002",
+    "row_label": "Due from Related Companies",
+    "keywords": ["Due from Related Companies", "Related Company Receivable", "Due from Related Parties"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0063",
+    "row_label": "Due from Officers",
+    "keywords": ["Due from Officers", "Officer Receivables", "Loans to Officers", "Receivable from Officers"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0064",
+    "row_label": "Due from Stockholders",
+    "keywords": ["Due from Stockholders", "Shareholder Receivables", "Loans to Shareholders", "Due from Shareholders", "Loans to partners", "Loans to partners (or persons related to partners)"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0065",
+    "row_label": "Due from Employees",
+    "keywords": ["Due from Employees", "Employee Receivables", "Employee Loans", "Loans to Employees"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0066.001",
+    "row_label": "Other Rec.- Non current",
+    "keywords": ["Other Receivables Non current", "Other Non-Current Receivables", "Long-Term Other Receivables"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0066.002",
+    "row_label": "Other Rec.- Non current",
+    "keywords": ["Other Receivables Non current", "Other Long-Term Receivables"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0068",
+    "row_label": "Land",
+    "keywords": ["Land", "Land and Land Improvements", "Real Property Land", "Land (net of any amortization)"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets", "Property Plant and Equipment"]
+  },
+  {
+    "chart_of_account_line": "L0070",
+    "row_label": "Buildings",
+    "keywords": ["Buildings", "Building and Improvements", "Structures", "Real Estate Buildings", "Buildings and other depreciable assets"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets", "Property Plant and Equipment"]
+  },
+  {
+    "chart_of_account_line": "L0073",
+    "row_label": "Machinery & Equipment",
+    "keywords": ["Machinery and Equipment", "Machinery & Equipment", "Equipment and Machinery", "Plant and Machinery"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets", "Property Plant and Equipment"]
+  },
+  {
+    "chart_of_account_line": "L0076",
+    "row_label": "Other Equipment",
+    "keywords": ["Other Equipment", "Miscellaneous Equipment", "Other Machinery"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets", "Property Plant and Equipment"]
+  },
+  {
+    "chart_of_account_line": "L0077",
+    "row_label": "Furniture & Fixtures",
+    "keywords": ["Furniture and Fixtures", "Furniture & Fixtures", "Office Furniture", "Fixtures and Fittings"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets", "Property Plant and Equipment"]
+  },
+  {
+    "chart_of_account_line": "L0078",
+    "row_label": "Leasehold Improvements",
+    "keywords": ["Leasehold Improvements", "Tenant Improvements", "Lease Improvements"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets", "Property Plant and Equipment"]
+  },
+  {
+    "chart_of_account_line": "L0080",
+    "row_label": "Capital Leases",
+    "keywords": ["Capital Leases", "Capital Lease Assets", "Finance Leases", "Right of Use Assets"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets", "Property Plant and Equipment"]
+  },
+  {
+    "chart_of_account_line": "L0081",
+    "row_label": "Other Fixed Assets",
+    "keywords": ["Other Fixed Assets", "Other Property Plant Equipment", "Miscellaneous Fixed Assets", "Depletable assets"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets", "Property Plant and Equipment"]
+  },
+  {
+    "chart_of_account_line": "L0082",
+    "row_label": "Gross Fixed Assets",
+    "keywords": ["Gross Fixed Assets", "Total Fixed Assets Gross", "Fixed Assets at Cost", "Property Plant Equipment Gross"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets"]
+  },
+  {
+    "chart_of_account_line": "L0083",
+    "row_label": "Accumulated Depreciation (-)",
+    "keywords": ["Accumulated Depreciation", "Accum Depreciation", "Total Depreciation", "Depreciation Reserve", "Less Accumulated Depreciation", "Less accumulated depletion", "Less accumulated amortization"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets"]
+  },
+  {
+    "chart_of_account_line": "L0084",
+    "row_label": "Net Fixed Assets",
+    "keywords": ["Net Fixed Assets", "Net PPE", "Net Property Plant and Equipment", "Fixed Assets Net", "Property Plant Equipment Net"],
+    "typically_found_in": ["Balance Sheet", "Fixed Assets"]
+  },
+  {
+    "chart_of_account_line": "L0085",
+    "row_label": "Prepaid Expenses - Non current",
+    "keywords": ["Prepaid Expenses Non current", "Long-Term Prepaid Expenses", "Non-Current Prepaid"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0086",
+    "row_label": "Deferred Charges",
+    "keywords": ["Deferred Charges", "Deferred Costs", "Deferred Financing Costs", "Deferred Loan Costs"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0087.001",
+    "row_label": "Investments",
+    "keywords": ["Investments", "Long-Term Investments", "Investment Securities", "Equity Investments"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets", "Investments"]
+  },
+  {
+    "chart_of_account_line": "L0087.002",
+    "row_label": "Investments",
+    "keywords": ["Investments", "Other Investments", "Additional Investments"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets", "Investments"]
+  },
+  {
+    "chart_of_account_line": "L0089",
+    "row_label": "Investments in Subsidiary",
+    "keywords": ["Investments in Subsidiary", "Investment in Subsidiaries", "Subsidiary Investments", "Equity in Subsidiaries"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets", "Investments"]
+  },
+  {
+    "chart_of_account_line": "L0090",
+    "row_label": "Deposits",
+    "keywords": ["Deposits", "Security Deposits", "Rental Deposits", "Utility Deposits"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets", "Other Assets"]
+  },
+  {
+    "chart_of_account_line": "L0103",
+    "row_label": "Advances",
+    "keywords": ["Advances", "Loans and Advances", "Advances to Employees", "Prepaid Advances"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets", "Other Assets"]
+  },
+  {
+    "chart_of_account_line": "L0104",
+    "row_label": "Cash Surrender Value Life Ins.",
+    "keywords": ["Cash Surrender Value", "CSV Life Insurance", "Life Insurance Cash Value", "Cash Value Life Insurance"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets", "Other Assets"]
+  },
+  {
+    "chart_of_account_line": "L0105.001",
+    "row_label": "Other Assets",
+    "keywords": ["Other Assets", "Other assets", "Other assets (attach statement)", "Other assets attach statement", "Other Noncurrent Assets", "Miscellaneous Other Assets"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0105.002",
+    "row_label": "Other Assets",
+    "keywords": ["Other Assets", "Other assets", "Other assets (attach statement)", "Other assets attach statement", "Miscellaneous Assets", "Other Long Term Assets"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0105.003",
+    "row_label": "Other Assets",
+    "keywords": ["Other Assets", "Other assets", "Other assets (attach statement)", "Other assets attach statement", "Additional Other Assets"],
+    "typically_found_in": ["Balance Sheet", "Non-Current Assets"]
+  },
+  {
+    "chart_of_account_line": "L0115",
+    "row_label": "Goodwill",
+    "keywords": ["Goodwill", "Purchased Goodwill", "Acquisition Goodwill"],
+    "typically_found_in": ["Balance Sheet", "Intangible Assets"]
+  },
+  {
+    "chart_of_account_line": "L0116",
+    "row_label": "Other Intangibles",
+    "keywords": ["Other Intangibles", "Intangible Assets", "Other Intangible Assets", "Intangibles", "Intangible assets (amortizable only)"],
+    "typically_found_in": ["Balance Sheet", "Intangible Assets"]
+  },
+  {
+    "chart_of_account_line": "L0118",
+    "row_label": "TOTAL ASSETS",
+    "keywords": ["Total Assets", "TOTAL ASSETS", "Assets Total", "Total asset"],
+    "typically_found_in": ["Balance Sheet"]
+  },
+  {
+    "chart_of_account_line": "L0126",
+    "row_label": "Overdrafts",
+    "keywords": ["Overdrafts", "Bank Overdrafts", "Overdraft Facility"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0130",
+    "row_label": "Notes Payable - Banks",
+    "keywords": ["Notes Payable Banks", "Bank Notes Payable", "Notes Payable to Banks", "Bank Loans", "Line of Credit"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0131.001",
+    "row_label": "Notes Payable",
+    "keywords": ["Notes Payable", "Short-Term Notes Payable", "Promissory Notes Payable", "Mortgages notes bonds payable in less than 1 year", "Mortgages, notes, bonds payable in less than 1 year"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0131.002",
+    "row_label": "Notes Payable",
+    "keywords": ["Notes Payable", "Other Notes Payable"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0134.001",
+    "row_label": "Current Portion - Long Term Debt",
+    "keywords": ["Current Portion Long Term Debt", "Current Maturities Long Term Debt", "CPLTD", "Current Portion LTD"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0134.002",
+    "row_label": "Current Portion - Long Term Debt",
+    "keywords": ["Current Portion Long Term Debt", "Current Maturities of LTD"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0134.003",
+    "row_label": "Current Portion - Long Term Debt",
+    "keywords": ["Current Portion Long Term Debt"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0134.004",
+    "row_label": "Current Portion - Long Term Debt",
+    "keywords": ["Current Portion Long Term Debt"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0134.005",
+    "row_label": "Current Portion - Long Term Debt",
+    "keywords": ["Current Portion Long Term Debt"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0135",
+    "row_label": "Current Portion - Capital Lease Obligations",
+    "keywords": ["Current Portion Capital Lease", "Current Capital Lease Obligations", "Current Portion Finance Lease"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0137",
+    "row_label": "Total Short Term Debt",
+    "keywords": ["Total Short Term Debt", "Short Term Debt Total", "Total Current Debt", "Short-Term Borrowings Total"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0138",
+    "row_label": "Trade Accounts Payable",
+    "keywords": ["Trade Accounts Payable", "Accounts Payable", "Trade Payables", "A/P", "Trade A/P"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0139.001",
+    "row_label": "A/P to Related",
+    "keywords": ["A/P to Related", "Accounts Payable Related", "Payable to Related Parties", "Due to Related"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0139.002",
+    "row_label": "A/P to Affiliates",
+    "keywords": ["A/P to Affiliates", "Accounts Payable Affiliates", "Payable to Affiliates", "Due to Affiliates Current"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0140.001",
+    "row_label": "Other A/P",
+    "keywords": ["Other A/P", "Other Accounts Payable", "Miscellaneous Payables"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0140.002",
+    "row_label": "Other A/P",
+    "keywords": ["Other A/P", "Other Payables"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0140.003",
+    "row_label": "Other A/P",
+    "keywords": ["Other A/P"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0141",
+    "row_label": "Total A/P",
+    "keywords": ["Total A/P", "Total Accounts Payable", "Accounts Payable Total"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0142.001",
+    "row_label": "Accrued Wages/Salaries",
+    "keywords": ["Accrued Wages", "Accrued Salaries", "Wages Payable", "Salaries Payable", "Accrued Compensation"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities", "Accrued Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0142.002",
+    "row_label": "Accrued Bonuses",
+    "keywords": ["Accrued Bonuses", "Bonus Payable", "Bonuses Accrued"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities", "Accrued Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0143",
+    "row_label": "Accrued Payroll Taxes",
+    "keywords": ["Accrued Payroll Taxes", "Payroll Tax Liability", "Payroll Taxes Payable"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities", "Accrued Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0144",
+    "row_label": "Accrued Profit Sharing Contrib",
+    "keywords": ["Accrued Profit Sharing", "Profit Sharing Contribution", "Profit Sharing Payable"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities", "Accrued Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0145",
+    "row_label": "Accrued Interest",
+    "keywords": ["Accrued Interest", "Interest Payable", "Interest Accrued"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities", "Accrued Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0146",
+    "row_label": "Accrued Dividends",
+    "keywords": ["Accrued Dividends", "Dividends Payable", "Dividends Accrued"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities", "Accrued Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0147.001",
+    "row_label": "Other Accruals",
+    "keywords": ["Other Accruals", "Other Accrued Liabilities", "Miscellaneous Accruals"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities", "Accrued Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0147.002",
+    "row_label": "Other Accruals",
+    "keywords": ["Other Accruals", "Additional Accruals"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities", "Accrued Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0148",
+    "row_label": "Total Accruals",
+    "keywords": ["Total Accruals", "Total Accrued Liabilities", "Accruals Total"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0149",
+    "row_label": "Federal Income Taxes Payable",
+    "keywords": ["Federal Income Taxes Payable", "Income Tax Payable", "Federal Taxes Payable", "Income Taxes Payable"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0151",
+    "row_label": "Billings in Excess of Costs",
+    "keywords": ["Billings in Excess of Costs", "Overbillings", "Contract Liabilities", "Deferred Revenue Construction"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0152.001",
+    "row_label": "Other Current Liabilities",
+    "keywords": ["Other Current Liabilities", "Other Short-Term Liabilities", "Miscellaneous Current Liabilities"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0152.002",
+    "row_label": "Other Current Liabilities",
+    "keywords": ["Other Current Liabilities", "Other Current Obligations"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0152.003",
+    "row_label": "Other Current Liabilities",
+    "keywords": ["Other Current Liabilities"],
+    "typically_found_in": ["Balance Sheet", "Current Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0155",
+    "row_label": "Total Current Liabilities",
+    "keywords": ["Total Current Liabilities", "Current Liabilities Total", "Total Current Obligations"],
+    "typically_found_in": ["Balance Sheet"]
+  },
+  {
+    "chart_of_account_line": "L0156.001",
+    "row_label": "Long Term Debt",
+    "keywords": ["Long Term Debt", "Long-Term Borrowings", "Noncurrent Debt", "Long Term Loans", "Mortgages notes bonds payable in 1 year or more", "Mortgages, notes, bonds payable in 1 year or more", "All nonrecourse loans"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0156.002",
+    "row_label": "Long Term Debt",
+    "keywords": ["Long Term Debt", "Long-Term Notes Payable"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0156.003",
+    "row_label": "Long Term Debt",
+    "keywords": ["Long Term Debt"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0156.004",
+    "row_label": "Long Term Debt",
+    "keywords": ["Long Term Debt"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0156.005",
+    "row_label": "Long Term Debt",
+    "keywords": ["Long Term Debt"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0161",
+    "row_label": "Capital Lease Obligations",
+    "keywords": ["Capital Lease Obligations", "Finance Lease Obligations", "Long-Term Lease Obligations"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0163.001",
+    "row_label": "Subordinated Debt",
+    "keywords": ["Subordinated Debt", "Junior Debt", "Sub Debt", "Subordinated Notes"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0163.002",
+    "row_label": "Subordinated Debt",
+    "keywords": ["Subordinated Debt", "Subordinated Loans"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0165.001",
+    "row_label": "Due to Related",
+    "keywords": ["Due to Related", "Payable to Related Parties", "Related Party Payables Long Term", "Loans from partners", "Loans from partners (or persons related to partners)"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0165.002",
+    "row_label": "Due to Affiliates",
+    "keywords": ["Due to Affiliates", "Payable to Affiliates Long Term", "Affiliate Payables"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0166",
+    "row_label": "Due to Officers",
+    "keywords": ["Due to Officers", "Officer Loans Payable", "Loans from Officers", "Payable to Officers"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0167",
+    "row_label": "Due to Stockholders",
+    "keywords": ["Due to Stockholders", "Shareholder Loans", "Loans from Shareholders", "Due to Shareholders"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0168",
+    "row_label": "Due to Employees",
+    "keywords": ["Due to Employees", "Employee Loans Payable", "Loans from Employees"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0170",
+    "row_label": "Deferred Income Taxes",
+    "keywords": ["Deferred Income Taxes", "Deferred Tax Liability", "Deferred Taxes Payable"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0171",
+    "row_label": "Deferred Income",
+    "keywords": ["Deferred Income", "Deferred Revenue", "Unearned Revenue", "Deferred Income Long Term"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0175",
+    "row_label": "Minority Interest",
+    "keywords": ["Minority Interest", "Noncontrolling Interest", "Non-Controlling Interest"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0176.001",
+    "row_label": "Other Liabilities",
+    "keywords": ["Other Liabilities", "Other Non-Current Liabilities", "Other Long-Term Liabilities"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0176.002",
+    "row_label": "Other Liabilities",
+    "keywords": ["Other Liabilities", "Miscellaneous Long-Term Liabilities"],
+    "typically_found_in": ["Balance Sheet", "Long-Term Liabilities"]
+  },
+  {
+    "chart_of_account_line": "L0179",
+    "row_label": "Total Liabilities",
+    "keywords": ["Total Liabilities", "Liabilities Total", "Total Obligations"],
+    "typically_found_in": ["Balance Sheet"]
+  },
+  {
+    "chart_of_account_line": "L0180.001",
+    "row_label": "Subordinated Debt (Equity)",
+    "keywords": ["Subordinated Debt Equity", "Sub Debt Equity", "Mezzanine Debt"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0180.002",
+    "row_label": "Subordinated Debt (Equity)",
+    "keywords": ["Subordinated Debt Equity"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0183",
+    "row_label": "Stock Warrants",
+    "keywords": ["Stock Warrants", "Warrants", "Warrant Liability", "Equity Warrants"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0184",
+    "row_label": "Reserves",
+    "keywords": ["Reserves", "Capital Reserves", "Other Reserves", "Reserve Accounts"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0185",
+    "row_label": "Preferred Stock",
+    "keywords": ["Preferred Stock", "Preference Shares", "Preferred Equity", "Preferred Shares"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0186.001",
+    "row_label": "Common Stock",
+    "keywords": ["Common Stock", "Share Capital", "Issued Capital", "Ordinary Shares", "Common Shares"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0186.002",
+    "row_label": "Common Stock",
+    "keywords": ["Common Stock", "Equity Capital"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0188",
+    "row_label": "Additional Paid-in Capital",
+    "keywords": ["Additional Paid-in Capital", "APIC", "Paid In Capital", "Additional Paid In Capital", "Capital Surplus"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0189",
+    "row_label": "Other Equity",
+    "keywords": ["Other Equity", "Other Shareholders Equity", "Other Stockholders Equity", "Accumulated Other Comprehensive Income"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0191",
+    "row_label": "Retained Earnings",
+    "keywords": ["Retained Earnings", "Accumulated Earnings", "Retained Profit", "Accumulated Deficit", "Retained Surplus"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0200",
+    "row_label": "Treasury Stock (-)",
+    "keywords": ["Treasury Stock", "Repurchased Shares", "Treasury Shares", "Stock Buyback"],
+    "typically_found_in": ["Balance Sheet", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0201",
+    "row_label": "Total Net Worth",
+    "keywords": ["Total Net Worth", "Total Equity", "Shareholders Equity Total", "Total Stockholders Equity", "Net Worth", "Partners capital accounts", "Partners' capital accounts"],
+    "typically_found_in": ["Balance Sheet"]
+  },
+  {
+    "chart_of_account_line": "L0202",
+    "row_label": "TOTAL LIABILITIES & NET WORTH",
+    "keywords": ["Total Liabilities and Net Worth", "TOTAL LIABILITIES & NET WORTH", "Total Liabilities and Equity", "Total Liabilities & Stockholders Equity", "Total liabilities and capital"],
+    "typically_found_in": ["Balance Sheet"]
+  },
+  {
+    "chart_of_account_line": "L0203.001",
+    "row_label": "Sales #1",
+    "keywords": ["Sales", "Revenue", "Net Sales", "Gross Sales", "Net Revenue"],
+    "typically_found_in": ["Income Statement", "Revenue"]
+  },
+  {
+    "chart_of_account_line": "L0203.002",
+    "row_label": "Sales #2",
+    "keywords": ["Sales", "Revenue #2", "Other Sales"],
+    "typically_found_in": ["Income Statement", "Revenue"]
+  },
+  {
+    "chart_of_account_line": "L0203.003",
+    "row_label": "Sales #3",
+    "keywords": ["Sales #3", "Revenue #3"],
+    "typically_found_in": ["Income Statement", "Revenue"]
+  },
+  {
+    "chart_of_account_line": "L0203.004",
+    "row_label": "Sales #4",
+    "keywords": ["Sales #4", "Revenue #4"],
+    "typically_found_in": ["Income Statement", "Revenue"]
+  },
+  {
+    "chart_of_account_line": "L0203.005",
+    "row_label": "Sales #5",
+    "keywords": ["Sales #5", "Revenue #5"],
+    "typically_found_in": ["Income Statement", "Revenue"]
+  },
+  {
+    "chart_of_account_line": "L0220",
+    "row_label": "Total Sales",
+    "keywords": ["Total Sales", "Total Revenue", "Net Revenue", "Total Net Sales", "Revenues Total"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0221.001",
+    "row_label": "Cost of Goods Sold #1",
+    "keywords": ["Cost of Goods Sold", "COGS", "Cost of Sales", "Cost of Revenue"],
+    "typically_found_in": ["Income Statement", "Cost of Goods Sold"]
+  },
+  {
+    "chart_of_account_line": "L0221.002",
+    "row_label": "Cost of Goods Sold #2",
+    "keywords": ["Cost of Goods Sold #2", "COGS #2"],
+    "typically_found_in": ["Income Statement", "Cost of Goods Sold"]
+  },
+  {
+    "chart_of_account_line": "L0221.003",
+    "row_label": "Cost of Goods Sold #3",
+    "keywords": ["Cost of Goods Sold #3", "COGS #3"],
+    "typically_found_in": ["Income Statement", "Cost of Goods Sold"]
+  },
+  {
+    "chart_of_account_line": "L0221.004",
+    "row_label": "Cost of Goods Sold #4",
+    "keywords": ["Cost of Goods Sold #4", "COGS #4"],
+    "typically_found_in": ["Income Statement", "Cost of Goods Sold"]
+  },
+  {
+    "chart_of_account_line": "L0221.005",
+    "row_label": "Cost of Goods Sold #5",
+    "keywords": ["Cost of Goods Sold #5", "COGS #5"],
+    "typically_found_in": ["Income Statement", "Cost of Goods Sold"]
+  },
+  {
+    "chart_of_account_line": "L0222",
+    "row_label": "Cost of Goods Depreciation",
+    "keywords": ["Cost of Goods Depreciation", "COGS Depreciation", "Depreciation in Cost of Sales"],
+    "typically_found_in": ["Income Statement", "Cost of Goods Sold"]
+  },
+  {
+    "chart_of_account_line": "L0227",
+    "row_label": "Gross Profit",
+    "keywords": ["Gross Profit", "Gross Income", "Gross Margin"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0230.001",
+    "row_label": "Selling, General & Admin. Expenses",
+    "keywords": ["Selling General and Administrative", "SG&A", "General and Administrative", "G&A Expenses", "Selling General Administrative Expenses"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0230.002",
+    "row_label": "Selling, General & Admin. Expenses",
+    "keywords": ["Selling General and Administrative Expenses", "SG&A #2"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0231",
+    "row_label": "Officers' Salaries",
+    "keywords": ["Officers Salaries", "Officer Compensation", "Executive Salaries", "Salaries to Officers"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0232",
+    "row_label": "Lease/Rent Expense",
+    "keywords": ["Lease Rent Expense", "Rent Expense", "Lease Expense", "Rental Expense", "Operating Lease Expense"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0236.001",
+    "row_label": "Other Operating Expenses",
+    "keywords": ["Other Operating Expenses", "Other Operating Costs", "Miscellaneous Operating Expenses"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0236.002",
+    "row_label": "Other Operating Expenses",
+    "keywords": ["Other Operating Expenses"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0236.003",
+    "row_label": "Other Operating Expenses",
+    "keywords": ["Other Operating Expenses"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0236.004",
+    "row_label": "Other Operating Expenses",
+    "keywords": ["Other Operating Expenses"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0236.005",
+    "row_label": "Other Operating Expenses",
+    "keywords": ["Other Operating Expenses"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0236.006",
+    "row_label": "Other Operating Expenses",
+    "keywords": ["Other Operating Expenses"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0240",
+    "row_label": "Depreciation",
+    "keywords": ["Depreciation", "Depreciation Expense", "Depreciation Cost", "Depreciation and Amortization"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0241",
+    "row_label": "Amortization",
+    "keywords": ["Amortization", "Amortization Expense", "Amortization Cost"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0242",
+    "row_label": "Bad Debt Expense",
+    "keywords": ["Bad Debt Expense", "Provision for Bad Debts", "Allowance for Doubtful Accounts Expense"],
+    "typically_found_in": ["Income Statement", "Operating Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0244",
+    "row_label": "Total Operating Expenses",
+    "keywords": ["Total Operating Expenses", "Operating Expenses Total", "Total Operating Costs"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0245",
+    "row_label": "Operating Profit",
+    "keywords": ["Operating Profit", "Operating Income", "EBIT", "Earnings from Operations", "Income from Operations"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0246.001",
+    "row_label": "Interest Income",
+    "keywords": ["Interest Income", "Finance Income", "Interest Revenue", "Investment Income"],
+    "typically_found_in": ["Income Statement", "Other Income"]
+  },
+  {
+    "chart_of_account_line": "L0246.002",
+    "row_label": "Interest Income",
+    "keywords": ["Interest Income", "Interest Earned"],
+    "typically_found_in": ["Income Statement", "Other Income"]
+  },
+  {
+    "chart_of_account_line": "L0247",
+    "row_label": "Gain on Sale of Assets",
+    "keywords": ["Gain on Sale of Assets", "Gain on Asset Disposal", "Gain on Disposal", "Asset Sale Gain"],
+    "typically_found_in": ["Income Statement", "Other Income"]
+  },
+  {
+    "chart_of_account_line": "L0250.001",
+    "row_label": "Other Income",
+    "keywords": ["Other Income", "Miscellaneous Income", "Non-Operating Income", "Other Revenue"],
+    "typically_found_in": ["Income Statement", "Other Income"]
+  },
+  {
+    "chart_of_account_line": "L0250.002",
+    "row_label": "Other Income",
+    "keywords": ["Other Income", "Additional Other Income"],
+    "typically_found_in": ["Income Statement", "Other Income"]
+  },
+  {
+    "chart_of_account_line": "L0253",
+    "row_label": "Income - Minority Interest",
+    "keywords": ["Income Minority Interest", "Minority Interest Income", "Noncontrolling Interest Income"],
+    "typically_found_in": ["Income Statement", "Other Income"]
+  },
+  {
+    "chart_of_account_line": "L0254",
+    "row_label": "Income from Subsidiary",
+    "keywords": ["Income from Subsidiary", "Subsidiary Income", "Equity in Earnings of Subsidiary"],
+    "typically_found_in": ["Income Statement", "Other Income"]
+  },
+  {
+    "chart_of_account_line": "L0255",
+    "row_label": "Total Other Income",
+    "keywords": ["Total Other Income", "Other Income Total", "Total Non-Operating Income"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0256",
+    "row_label": "Interest Expense",
+    "keywords": ["Interest Expense", "Finance Cost", "Interest Cost", "Interest Charges"],
+    "typically_found_in": ["Income Statement", "Other Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0265",
+    "row_label": "Non-Cash Interest Expense",
+    "keywords": ["Non-Cash Interest Expense", "PIK Interest", "Non Cash Interest", "Accrued Interest Expense"],
+    "typically_found_in": ["Income Statement", "Other Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0268",
+    "row_label": "Loss on Sale of Assets",
+    "keywords": ["Loss on Sale of Assets", "Loss on Asset Disposal", "Loss on Disposal", "Asset Sale Loss"],
+    "typically_found_in": ["Income Statement", "Other Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0269.001",
+    "row_label": "Other Expense",
+    "keywords": ["Other Expense", "Other Expenses", "Miscellaneous Expenses", "Non-Operating Expenses"],
+    "typically_found_in": ["Income Statement", "Other Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0269.002",
+    "row_label": "Other Expense",
+    "keywords": ["Other Expense", "Additional Other Expenses"],
+    "typically_found_in": ["Income Statement", "Other Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0270",
+    "row_label": "Loss - Minority Interest",
+    "keywords": ["Loss Minority Interest", "Minority Interest Loss", "Noncontrolling Interest Loss"],
+    "typically_found_in": ["Income Statement", "Other Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0271",
+    "row_label": "Loss of Subsidiary",
+    "keywords": ["Loss of Subsidiary", "Subsidiary Loss", "Equity in Losses of Subsidiary"],
+    "typically_found_in": ["Income Statement", "Other Expenses"]
+  },
+  {
+    "chart_of_account_line": "L0272",
+    "row_label": "Total Other Expenses",
+    "keywords": ["Total Other Expenses", "Other Expenses Total", "Total Non-Operating Expenses"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0274",
+    "row_label": "Profit Before Tax",
+    "keywords": ["Profit Before Tax", "Income Before Taxes", "Pre-Tax Income", "Earnings Before Taxes", "EBT"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0275",
+    "row_label": "Current Taxes",
+    "keywords": ["Current Taxes", "Current Income Tax Expense", "Current Tax Provision", "Income Tax Current"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0276",
+    "row_label": "Deferred Taxes",
+    "keywords": ["Deferred Taxes", "Deferred Tax Expense", "Deferred Tax Provision", "Income Tax Deferred"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0277",
+    "row_label": "Profit Before Extraord. Items",
+    "keywords": ["Profit Before Extraordinary Items", "Income Before Extraordinary Items", "Pre-Extraordinary Income"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0281",
+    "row_label": "Extraordinary Gain",
+    "keywords": ["Extraordinary Gain", "Extraordinary Items Gain", "Unusual Gain"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0282",
+    "row_label": "Extraordinary Loss (-)",
+    "keywords": ["Extraordinary Loss", "Extraordinary Items Loss", "Unusual Loss"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0283",
+    "row_label": "Effect of Accounting Change",
+    "keywords": ["Effect of Accounting Change", "Cumulative Effect of Accounting Change", "Accounting Change Impact"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0286",
+    "row_label": "NET INCOME",
+    "keywords": ["Net Income", "NET INCOME", "Net Profit", "Net Earnings", "Profit After Tax", "Net Loss"],
+    "typically_found_in": ["Income Statement"]
+  },
+  {
+    "chart_of_account_line": "L0290",
+    "row_label": "Beginning Net Worth",
+    "keywords": ["Beginning Net Worth", "Beginning Equity", "Opening Net Worth", "Net Worth Beginning of Period", "Balance at beginning of year"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0292",
+    "row_label": "Net Income (Loss)",
+    "keywords": ["Net Income Loss", "Net Income or Loss", "Net Profit or Loss",
+                 "Ordinary business income (loss)", "Ordinary income (loss)",
+                 "Income (Loss)", "Net earnings (loss)", "Net income (loss) per books"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0293",
+    "row_label": "Cash Dividends",
+    "keywords": ["Cash Dividends", "Dividends Paid", "Cash Dividend Payments"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0294",
+    "row_label": "Stock Dividends",
+    "keywords": ["Stock Dividends", "Share Dividends", "Stock Dividend Distribution"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0298",
+    "row_label": "Accounting Change",
+    "keywords": ["Accounting Change", "Change in Accounting Policy", "Cumulative Accounting Adjustment"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0299",
+    "row_label": "Prior Period Adjustment",
+    "keywords": ["Prior Period Adjustment", "Restatement Adjustment", "Prior Year Adjustment"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0300.001",
+    "row_label": "Other Incr(Decr) to RE",
+    "keywords": ["Other Increase Decrease to Retained Earnings", "Other Changes in Retained Earnings"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0300.002",
+    "row_label": "Other Incr(Decr) to RE",
+    "keywords": ["Other Incr Decr to RE", "Other RE Adjustments"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0301",
+    "row_label": "Total Change in RE",
+    "keywords": ["Total Change in Retained Earnings", "Total RE Change", "Net Change in Retained Earnings"],
+    "typically_found_in": ["Statement of Retained Earnings", "Equity"]
+  },
+  {
+    "chart_of_account_line": "L0303.001",
+    "row_label": "Subordinated Debt (Equity)",
+    "keywords": ["Subordinated Debt Equity", "Sub Debt Equity Changes"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0303.002",
+    "row_label": "Subordinated Debt (Equity)",
+    "keywords": ["Subordinated Debt Equity"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0306",
+    "row_label": "Stock Warrants",
+    "keywords": ["Stock Warrants Changes", "Warrant Activity", "Warrants Issued"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0307",
+    "row_label": "Reserves",
+    "keywords": ["Reserves Changes", "Reserve Movements", "Changes in Reserves"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0308",
+    "row_label": "Preferred Stock",
+    "keywords": ["Preferred Stock Changes", "Preferred Stock Issued", "Preferred Share Activity"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0309.001",
+    "row_label": "Common Stock",
+    "keywords": ["Common Stock Changes", "Common Stock Issued", "Common Share Activity"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0309.002",
+    "row_label": "Common Stock",
+    "keywords": ["Common Stock", "Stock Changes"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0311",
+    "row_label": "Additional Paid-in Capital",
+    "keywords": ["Additional Paid-in Capital Changes", "APIC Changes", "Capital Contributions"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0312",
+    "row_label": "Other Equity",
+    "keywords": ["Other Equity Changes", "Other Comprehensive Income", "Accumulated Other Comprehensive Income"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0321",
+    "row_label": "Treasury Stock",
+    "keywords": ["Treasury Stock Changes", "Stock Repurchases", "Treasury Share Activity"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0322",
+    "row_label": "Total Changes in Other NW",
+    "keywords": ["Total Changes in Other Net Worth", "Total Other NW Changes", "Total Other Equity Changes"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0323",
+    "row_label": "Change in Net Worth",
+    "keywords": ["Change in Net Worth", "Net Worth Change", "Total Change in Equity", "Change in Shareholders Equity"],
+    "typically_found_in": ["Statement of Equity"]
+  },
+  {
+    "chart_of_account_line": "L0324",
+    "row_label": "Funds Available Adjustment - GCF",
+    "keywords": ["Funds Available Adjustment GCF", "Global Cash Flow Adjustment", "GCF Funds Available"],
+    "typically_found_in": ["Supplemental Information"]
+  },
+  {
+    "chart_of_account_line": "L0325",
+    "row_label": "Debt Payments Adjustment - GCF",
+    "keywords": ["Debt Payments Adjustment GCF", "Global Cash Flow Debt Adjustment", "GCF Debt Payments"],
+    "typically_found_in": ["Supplemental Information"]
+  },
+  {
+    "chart_of_account_line": "L0326.001",
+    "row_label": "Other Information",
+    "keywords": ["Other Information", "Supplemental Information", "Additional Information"],
+    "typically_found_in": ["Supplemental Information"]
+  },
+  {
+    "chart_of_account_line": "L0326.002",
+    "row_label": "Other Information",
+    "keywords": ["Other Information"],
+    "typically_found_in": ["Supplemental Information"]
+  },
+  {
+    "chart_of_account_line": "L0326.003",
+    "row_label": "Other Information",
+    "keywords": ["Other Information"],
+    "typically_found_in": ["Supplemental Information"]
+  },
+  {
+    "chart_of_account_line": "L0326.004",
+    "row_label": "Other Information",
+    "keywords": ["Other Information"],
+    "typically_found_in": ["Supplemental Information"]
+  },
+  {
+    "chart_of_account_line": "L0326.005",
+    "row_label": "Other Information",
+    "keywords": ["Other Information"],
+    "typically_found_in": ["Supplemental Information"]
+  },
+  {
+    "chart_of_account_line": "L0359",
+    "row_label": "Existing Debt Payments P&I",
+    "keywords": ["Existing Debt Payments", "Existing P&I Payments", "Current Debt Service", "Existing Loan Payments"],
+    "typically_found_in": ["Supplemental Information", "Debt Schedule"]
+  },
+  {
+    "chart_of_account_line": "L0360",
+    "row_label": "Proposed Debt Payments P&I",
+    "keywords": ["Proposed Debt Payments", "Proposed P&I Payments", "New Debt Service", "Proposed Loan Payments"],
+    "typically_found_in": ["Supplemental Information", "Debt Schedule"]
+  },
+  {
+    "chart_of_account_line": "L0361",
+    "row_label": "Total Debt Payments P&I",
+    "keywords": ["Total Debt Payments", "Total P&I Payments", "Total Debt Service", "Total Loan Payments"],
+    "typically_found_in": ["Supplemental Information", "Debt Schedule"]
+  },
+  {
+    "chart_of_account_line": "L0362",
+    "row_label": "Existing Debt Interest Expense",
+    "keywords": ["Existing Debt Interest", "Existing Interest Expense", "Current Debt Interest"],
+    "typically_found_in": ["Supplemental Information", "Debt Schedule"]
+  },
+  {
+    "chart_of_account_line": "L0363",
+    "row_label": "Proposed Debt Interest Expense",
+    "keywords": ["Proposed Debt Interest", "Proposed Interest Expense", "New Debt Interest"],
+    "typically_found_in": ["Supplemental Information", "Debt Schedule"]
+  }
+]
+ 
+ 
