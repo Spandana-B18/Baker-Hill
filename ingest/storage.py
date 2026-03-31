@@ -1,0 +1,98 @@
+import json
+import os
+from typing import Any, Dict, Optional
+
+from azure.core.pipeline.transport import RequestsTransport
+from azure.storage.blob import BlobServiceClient, ContentSettings
+
+
+def get_blob_service_client() -> BlobServiceClient:
+    connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+
+    if not connection_string:
+        raise ValueError("Missing AZURE_STORAGE_CONNECTION_STRING")
+
+    return BlobServiceClient.from_connection_string(
+        connection_string,
+        connection_timeout=60,
+        read_timeout=300,
+        transport=RequestsTransport(connection_timeout=60, read_timeout=300),
+    )
+
+
+def get_container_client(container_name: str):
+    service_client = get_blob_service_client()
+    container_client = service_client.get_container_client(container_name)
+
+    try:
+        container_client.create_container()
+    except Exception:
+        # Container may already exist; ignore.
+        pass
+
+    return container_client
+
+
+def upload_bytes_to_blob(
+    container_name: str,
+    blob_name: str,
+    data: bytes,
+    content_type: Optional[str] = None,
+) -> str:
+    container_client = get_container_client(container_name)
+    blob_client = container_client.get_blob_client(blob_name)
+
+    if content_type:
+        blob_client.upload_blob(
+            data,
+            overwrite=True,
+            max_concurrency=4,
+            content_settings=ContentSettings(content_type=content_type),
+        )
+    else:
+        blob_client.upload_blob(data, overwrite=True, max_concurrency=4)
+
+    return blob_name
+
+
+def upload_json_to_blob(
+    container_name: str,
+    blob_name: str,
+    data: Dict[str, Any],
+) -> str:
+    payload = json.dumps(
+        data,
+        indent=2,
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
+
+    return upload_bytes_to_blob(
+        container_name=container_name,
+        blob_name=blob_name,
+        data=payload,
+        content_type="application/json",
+    )
+
+
+def download_blob_bytes(
+    container_name: str,
+    blob_name: str,
+) -> bytes:
+    container_client = get_container_client(container_name)
+    blob_client = container_client.get_blob_client(blob_name)
+    return blob_client.download_blob().readall()
+
+
+def blob_exists(container_name: str, blob_name: str) -> bool:
+    container_client = get_container_client(container_name)
+    blob_client = container_client.get_blob_client(blob_name)
+    return blob_client.exists()
+
+
+def list_blobs(container_name: str, name_starts_with: Optional[str] = None) -> list[str]:
+    """List blob names in a container. Optionally filter by prefix."""
+    container_client = get_container_client(container_name)
+    blobs = container_client.list_blobs(name_starts_with=name_starts_with or "")
+    return [b.name for b in blobs]
+
