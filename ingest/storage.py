@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, Optional
 
 from azure.core.pipeline.transport import RequestsTransport
+from azure.core.pipeline.transport import RequestsTransport
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
 
