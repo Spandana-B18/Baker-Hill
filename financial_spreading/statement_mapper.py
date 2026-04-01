@@ -43,12 +43,12 @@ _STOPWORDS: Set[str] = {
 # ---------------------------------------------------------------------------
 # Safe label normalization map
 # ---------------------------------------------------------------------------
-# Maps common tax-form label variants → canonical terms that match the COA.
-# Keys are lowercase. This is deterministic lookup — NOT hallucination.
+# Maps common tax-form label variants ? canonical terms that match the COA.
+# Keys are lowercase. This is deterministic lookup -> NOT hallucination.
 # Add entries here whenever a known tax-form label fails to match its COA line.
 # ---------------------------------------------------------------------------
 SAFE_MAP: Dict[str, str] = {
-    # ── Form 1040 ────────────────────────────────────────────────────────────
+    # -- Form 1040 ------------------------------------------------------------
     "w-2":                         "wages",
     "w2":                          "wages",
     "w-2 income":                  "wages",
@@ -72,7 +72,7 @@ SAFE_MAP: Dict[str, str] = {
     "taxable income":              "taxable income",
     "federal income tax withheld": "taxes withheld",
 
-    # ── Form 1065 / 1120-S / 1120 — Income lines ─────────────────────────────
+    # -- Form 1065 / 1120-S / 1120 -> Income lines -----------------------------
     "gross receipts or sales":                          "sales",
     "gross receipts":                                   "sales",
     "returns and allowances":                           "sales returns and allowances",
@@ -85,7 +85,7 @@ SAFE_MAP: Dict[str, str] = {
     "guaranteed payments for services":                 "officers salaries",
     "net earnings (loss) from self-employment":         "net income",
 
-    # ── Form 1065 / 1120-S / 1120 — Deduction lines ──────────────────────────
+    # -- Form 1065 / 1120-S / 1120 -> Deduction lines --------------------------
     "compensation of officers":                                   "officers salaries",
     "salaries and wages":                                         "wages",
     "salaries and wages (less employment credits)":               "wages",
@@ -112,7 +112,7 @@ SAFE_MAP: Dict[str, str] = {
     "income tax":                                                 "current taxes",
     "total tax":                                                  "current taxes",
 
-    # ── Schedule L — Balance Sheet ────────────────────────────────────────────
+    # -- Schedule L -> Balance Sheet --------------------------------------------
     "cash":                                                       "cash",
     "trade notes and accounts receivable":                        "trade accounts receivable",
     "trade notes and accounts receivable (less allowance)":       "trade accounts receivable",
@@ -163,14 +163,14 @@ def _apply_safe_map(label: str) -> str:
 
     Matching order:
       1. Exact lowercase match
-      2. Prefix match — handles labels like
+      2. Prefix match -> handles labels like
          "Ordinary business income (loss) (page 1, line 22)" which
          start with a known SAFE_MAP key but have extra form metadata.
 
     Example:
-        "W-2 income"  →  "wages"
-        "Taxable interest"  →  "interest income"
-        "Total assets"  →  "Total assets"   (no alias, returned as-is)
+        "W-2 income"  ?  "wages"
+        "Taxable interest"  ?  "interest income"
+        "Total assets"  ?  "Total assets"   (no alias, returned as-is)
     """
     normalized = label.strip().lower()
     if normalized in SAFE_MAP:
@@ -261,11 +261,11 @@ def _tokenize(text: str) -> Set[str]:
 def _is_substantive(norm_label: str, min_tokens: int = 2) -> bool:
     """
     Return True if the normalized label has at least `min_tokens` meaningful tokens
-    (length ≥ 3, not a stopword).
+    (length = 3, not a stopword).
 
     Used to guard the substring-containment direction where the document label
-    is shorter than the COA keyword — e.g. "income" should NOT match
-    "Federal Income Tax Receivable" even though "income" ⊂ that string.
+    is shorter than the COA keyword -> e.g. "income" should NOT match
+    "Federal Income Tax Receivable" even though "income" ? that string.
     """
     tokens = [t for t in norm_label.split() if len(t) >= 3 and t not in _STOPWORDS]
     return len(tokens) >= min_tokens
@@ -306,7 +306,7 @@ def _cosine(a: List[float], b: List[float]) -> float:
 def _get_coa_index(schema: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """
     Build (and cache) one embedding per COA entry.
-    Text = row_label + all keywords joined — gives the model full semantic context.
+    Text = row_label + all keywords joined -> gives the model full semantic context.
     """
     key = id(schema)
     if key in _COA_INDEX_CACHE:
@@ -371,17 +371,17 @@ def _keyword_exact_match(
     Returns best (item, score, matched_candidate) or None.
 
     Scoring:
-      0.97 — exact match against the COA row_label itself
-      0.95 — exact match against a keyword alias
-      0.90 — substring containment (either direction)
+      0.97 -> exact match against the COA row_label itself
+      0.95 -> exact match against a keyword alias
+      0.90 -> substring containment (either direction)
     Row-label matches score higher than keyword matches to break ties correctly
     (e.g. "Gross profit" should beat "total income" for L0227 Gross Profit).
 
-    Empty labels are rejected immediately — an empty string is a substring of
+    Empty labels are rejected immediately -> an empty string is a substring of
     every string in Python, which would otherwise cause every COA line to match.
     """
     norm_label = _normalize(label)
-    if not norm_label:          # guard: empty after strip → never match anything
+    if not norm_label:          # guard: empty after strip ? never match anything
         return None
 
     best_item: Optional[Dict[str, Any]] = None
@@ -391,7 +391,7 @@ def _keyword_exact_match(
     for item in schema:
         row_label = item["row_label"]
         keywords  = item.get("keywords", [])
-        # row_label first (index 0), then keywords — so we can distinguish them
+        # row_label first (index 0), then keywords -> so we can distinguish them
         for idx, candidate in enumerate([row_label] + keywords):
             norm_cand = _normalize(candidate)
             if not norm_cand:
@@ -401,11 +401,11 @@ def _keyword_exact_match(
                 # Exact match: row_label wins over keyword alias
                 score = 0.97 if idx == 0 else 0.95
             elif norm_cand in norm_label:
-                # COA keyword found inside document label — valid containment
+                # COA keyword found inside document label -> valid containment
                 score = 0.90
             elif norm_label in norm_cand and _is_substantive(norm_label):
-                # Document label inside COA keyword — only valid when the label
-                # has ≥ 2 meaningful tokens; prevents "income", "Son", "taxes"
+                # Document label inside COA keyword -> only valid when the label
+                # has = 2 meaningful tokens; prevents "income", "Son", "taxes"
                 # etc. from matching any COA entry that contains that word.
                 score = 0.90
             else:
@@ -437,18 +437,18 @@ def match_row(
     cleaned_label = _canonicalize_source_label(row_label)
     mapped_label  = _apply_safe_map(cleaned_label)
 
-    # Step 1 — exact/keyword match on cleaned label
+    # Step 1 -> exact/keyword match on cleaned label
     exact = _keyword_exact_match(cleaned_label, schema)
     if exact:
         return exact
 
-    # Step 2 — exact/keyword match on SAFE_MAP alias (if alias differs)
+    # Step 2 -> exact/keyword match on SAFE_MAP alias (if alias differs)
     if mapped_label != cleaned_label:
         exact = _keyword_exact_match(mapped_label, schema)
         if exact:
             return exact
 
-    # Step 3 — semantic similarity via Azure OpenAI embeddings
+    # Step 3 -> semantic similarity via Azure OpenAI embeddings
     coa_index = _get_coa_index(schema)
     if coa_index is None:
         return None, 0.0, ""
@@ -579,6 +579,23 @@ def spread_statement(
                 }
             )
 
+    # Post-process: for each COA line, if period-qualified rows exist,
+    # remove bare (no-period) rows to avoid title duplication.
+    from collections import defaultdict as _dd
+    coa_has_period = _dd(bool)
+    for r in mapped_rows:
+        rl = r.get('row_label', '')
+        if '[Beginning of tax year]' in rl or '[End of tax year]' in rl:
+            coa_has_period[r['chart_of_account_line']] = True
+    mapped_rows = [
+        r for r in mapped_rows
+        if not (
+            coa_has_period[r['chart_of_account_line']]
+            and '[Beginning of tax year]' not in r.get('row_label', '')
+            and '[End of tax year]' not in r.get('row_label', '')
+        )
+    ]
+
     return mapped_rows, unmatched
 
 
@@ -592,13 +609,13 @@ def map_coa_to_document(
     candidate from the document.
 
     This is the INVERSE of spread_statement():
-      - spread_statement()     loops document rows → tries to find a COA match
-      - map_coa_to_document()  loops COA entries   → searches document candidates
+      - spread_statement()     loops document rows ? tries to find a COA match
+      - map_coa_to_document()  loops COA entries   ? searches document candidates
 
     Rules:
       - Only emits a row when a candidate scores >= threshold (default 0.75)
       - Uses SAFE_MAP aliases so tax-form labels like "W-2" match "Wages" in COA
-      - Never creates a value that isn't in the document — no hallucination possible
+      - Never creates a value that isn't in the document -> no hallucination possible
       - If no candidate meets the threshold for a COA line, that line is simply skipped
       - Emits one row per period (Beginning/End of tax year) for Schedule L tables
 
@@ -606,7 +623,7 @@ def map_coa_to_document(
     ----------
     candidates : flat list from extract_all_candidates(cu_json)
                  each item: {label, value, original_value, page, year, period}
-    schema     : loaded COA schema — list of dicts with row_label,
+    schema     : loaded COA schema -> list of dicts with row_label,
                  chart_of_account_line, keywords
     threshold  : minimum score to accept a match (default 0.75)
 
@@ -616,12 +633,12 @@ def map_coa_to_document(
     """
     mapped_rows: List[Dict[str, Any]] = []
 
-    # ── Pre-compute semantic embeddings for all unique candidate labels ──────
+    # -- Pre-compute semantic embeddings for all unique candidate labels ------
     # One batch API call covers every label in the document.
     # Falls back gracefully to keyword-only matching if embeddings unavailable.
     _label_vectors: Dict[str, List[float]] = {}
     _coa_index = _get_coa_index(schema)
-    # Map each COA item id → its vector index for O(1) lookup in the inner loop
+    # Map each COA item id ? its vector index for O(1) lookup in the inner loop
     _coa_item_idx: Dict[int, int] = {}
     if _coa_index is not None:
         _coa_item_idx = {id(it): i for i, it in enumerate(_coa_index["items"])}
@@ -678,7 +695,7 @@ def map_coa_to_document(
 
             period = candidate.get("period")
 
-            # ── Step 1: keyword exact/substring match ────────────────────
+            # -- Step 1: keyword exact/substring match --------------------
             exact_score = 0.0
             for try_label in {clean_label, normalized_label}:
                 norm = _normalize(try_label)
@@ -692,11 +709,11 @@ def map_coa_to_document(
                         # row_label (idx 0) wins ties over keyword aliases
                         s = 0.97 if t_idx == 0 else 0.95
                     elif norm_coa in norm:
-                        # COA keyword found inside document label — valid
+                        # COA keyword found inside document label -> valid
                         s = 0.90
                     elif norm in norm_coa and _is_substantive(norm):
-                        # Document label inside COA keyword — only when label
-                        # has ≥ 2 meaningful tokens (blocks "income", "Son", etc.)
+                        # Document label inside COA keyword -> only when label
+                        # has = 2 meaningful tokens (blocks "income", "Son", etc.)
                         s = 0.90
                     else:
                         continue
@@ -710,7 +727,7 @@ def map_coa_to_document(
                     best_per_period[period] = (candidate, score)
                 continue  # exact match wins; skip semantic
 
-            # ── Step 2: semantic similarity via Azure OpenAI embeddings ──────
+            # -- Step 2: semantic similarity via Azure OpenAI embeddings ------
             if _coa_index is not None and _label_vectors:
                 coa_idx = _coa_item_idx.get(id(coa_item))
                 if coa_idx is not None:
@@ -762,5 +779,21 @@ def map_coa_to_document(
                 "source_label":          best_candidate.get("label", ""),
                 "reasoning":             reasoning,
             })
+
+    # Post-process: if a COA line has period-qualified rows, drop bare rows.
+    from collections import defaultdict as _dd2
+    coa_has_period2 = _dd2(bool)
+    for r in mapped_rows:
+        rl = r.get("row_label", "")
+        if "[Beginning of tax year]" in rl or "[End of tax year]" in rl:
+            coa_has_period2[r["chart_of_account_line"]] = True
+    mapped_rows = [
+        r for r in mapped_rows
+        if not (
+            coa_has_period2[r["chart_of_account_line"]]
+            and "[Beginning of tax year]" not in r.get("row_label", "")
+            and "[End of tax year]" not in r.get("row_label", "")
+        )
+    ]
 
     return mapped_rows
