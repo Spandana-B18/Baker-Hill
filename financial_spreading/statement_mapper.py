@@ -534,11 +534,18 @@ def spread_statement(
             )
             continue
 
-        for val_entry in row.get("values", []):
+        values_list = row.get("values", [])
+        has_period_values = any(
+            (v.get("period") if isinstance(v, dict) else None) is not None
+            for v in values_list
+        )
+        for val_entry in values_list:
             value          = val_entry["value"] if isinstance(val_entry, dict) else val_entry
             original_value = val_entry.get("original_value", "") if isinstance(val_entry, dict) else ""
             year           = val_entry.get("year") if isinstance(val_entry, dict) else None
             period         = val_entry.get("period") if isinstance(val_entry, dict) else None
+            if period is None and has_period_values:
+                continue
             if year is not None:
                 try:
                     year = int(year)
