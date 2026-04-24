@@ -1,0 +1,10 @@
+Pillow
+streamlit
+python_dotenv
+azure_storage_blob
+azure-ai-contentunderstanding
+openai
+jsonschema
+pydantic
+azure-core
+azure-search-documents
